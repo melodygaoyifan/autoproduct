@@ -114,5 +114,42 @@ def resume(
     console.print(f"Artifacts: {state['artifacts_dir']}")
 
 
+@app.command()
+def replay(
+    review_id: str = typer.Argument(None, help="Review ID; omit to list reviews"),
+    repo_dir: str = typer.Option(".", help="Repository the review ran in"),
+):
+    """Replay a past review's audit trail from its YAML mirror."""
+    from autoproduct.replay import load_replay, summarize_step
+
+    reviews_dir = Path(repo_dir) / ".mas" / "reviews"
+    if review_id is None:
+        rows = sorted(p.name for p in reviews_dir.iterdir() if p.is_dir())
+        for name in rows:
+            console.print(name)
+        if not rows:
+            console.print("(no reviews recorded)")
+        return
+
+    rep = load_replay(reviews_dir, review_id)
+    table = Table(show_lines=False, title=f"review {rep.review_id}")
+    table.add_column("#")
+    table.add_column("node")
+    table.add_column("at")
+    table.add_column("summary")
+    for step in rep.steps:
+        table.add_row(
+            str(step.step),
+            step.node,
+            step.written_at.strftime("%H:%M:%S"),
+            summarize_step(step),
+        )
+    console.print(table)
+    console.print(
+        f"verdict: [bold]{rep.verdict}[/bold]"
+        + (f" · {rep.duration_s:.1f}s" if rep.duration_s is not None else "")
+    )
+
+
 def main() -> None:
     sys.exit(app())
