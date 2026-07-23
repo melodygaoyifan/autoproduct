@@ -61,10 +61,11 @@ def symbol_refs(repo_dir: str | Path, symbol: str, max_results: int = 60) -> str
             continue
         tree = parser.parse(source)
         rel = path.relative_to(root)
+        source_lines = source.splitlines()  # once per file (PR #15 review)
 
         def _line(node) -> str:
             row = node.start_point[0]
-            text = source.splitlines()[row].decode("utf-8", "replace").strip()
+            text = source_lines[row].decode("utf-8", "replace").strip()
             return f"{rel}:{row + 1}: {text[:160]}"
 
         for _, captures in QueryCursor(_DEF_QUERY).matches(tree.root_node):
