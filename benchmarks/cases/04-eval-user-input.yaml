@@ -1,0 +1,21 @@
+description: eval of request parameter
+diff: 'diff --git a/app/calc.py b/app/calc.py
+
+  --- a/app/calc.py
+
+  +++ b/app/calc.py
+
+  @@ -1,0 +1,2 @@
+
+  +def total(request):
+
+  +    return eval(request.args.get(''formula''))
+
+  '
+expected:
+- file_path: app/calc.py
+  keywords:
+  - eval
+  - code execution
+  - injection
+name: 04-eval-user-input

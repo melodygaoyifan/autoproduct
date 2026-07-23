@@ -11,11 +11,23 @@ def _diff(path: str, *added: str) -> str:
 
 
 def test_secret_scan_catches_aws_key():
-    diff = parse_unified_diff(_diff("config.py", 'AWS_KEY = "AKIAIOSFODNN7EXAMPLE"'))
+    diff = parse_unified_diff(_diff("config.py", 'AWS_KEY = "AKIAIOSFODNN7REALKEY"'))
     report = probes.secret_scan(diff, ".")
     assert len(report.findings) == 1
     assert report.findings[0].severity.value == "critical"
     assert report.findings[0].verification == "VERIFIED"
+
+
+def test_secret_scan_skips_documentation_example_keys():
+    diff = parse_unified_diff(_diff("config.py", 'AWS_KEY = "AKIAIOSFODNN7EXAMPLE"'))
+    assert probes.secret_scan(diff, ".").findings == []
+
+
+def test_csrf_ssrf_probe_ignores_data_files():
+    diff = parse_unified_diff(
+        _diff("benchmarks/cases/08.yaml", "    resp = requests.get(callback_url)")
+    )
+    assert probes.csrf_ssrf_probe(diff, ".").findings == []
 
 
 def test_secret_scan_clean_diff():

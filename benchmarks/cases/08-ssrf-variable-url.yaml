@@ -1,0 +1,24 @@
+description: outbound request to user-supplied URL
+diff: 'diff --git a/app/webhooks.py b/app/webhooks.py
+
+  --- a/app/webhooks.py
+
+  +++ b/app/webhooks.py
+
+  @@ -1,0 +1,3 @@
+
+  +def notify(callback_url):
+
+  +    resp = requests.get(callback_url)
+
+  +    return resp.status_code
+
+  '
+expected:
+- file_path: app/webhooks.py
+  keywords:
+  - ssrf
+  - allowlist
+  - user-supplied
+  - non-literal
+name: 08-ssrf-variable-url

@@ -1,0 +1,20 @@
+description: 'clean: variable renamed, all uses in diff'
+diff: 'diff --git a/app/util.py b/app/util.py
+
+  --- a/app/util.py
+
+  +++ b/app/util.py
+
+  @@ -1,2 +1,2 @@
+
+  -def area(w, h):
+
+  -    return w * h
+
+  +def area(width, height):
+
+  +    return width * height
+
+  '
+expected: []
+name: 09-clean-rename

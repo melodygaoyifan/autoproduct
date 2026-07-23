@@ -1,0 +1,22 @@
+description: UPDATE without WHERE cancels every order
+diff: 'diff --git a/app/orders.py b/app/orders.py
+
+  --- a/app/orders.py
+
+  +++ b/app/orders.py
+
+  @@ -1,0 +1,2 @@
+
+  +def cancel_order(order_id):
+
+  +    db.execute("UPDATE orders SET status = ''cancelled''")
+
+  '
+expected:
+- file_path: app/orders.py
+  keywords:
+  - where
+  - all orders
+  - every row
+  - all rows
+name: 02-missing-where
