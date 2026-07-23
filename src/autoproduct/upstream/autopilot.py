@@ -309,18 +309,38 @@ def run_feature(
 
     features_dir = root / "product" / "features"
     features_dir.mkdir(parents=True, exist_ok=True)
-    slug = f"{len(list(features_dir.iterdir())) + 1:02d}-" + "".join(
-        c if c.isalnum() else "-" for c in assessment.summary[:32].lower()
-    ).strip("-")
-    feature_dir = features_dir / slug
-    feature_dir.mkdir(exist_ok=True)
+    # Idempotent per FDR: an unbuilt feature dir with identical FDR content
+    # is resumed (confirm → build is two calls on the same feature).
+    feature_dir = None
+    for existing in sorted(features_dir.iterdir()):
+        fdr_file = existing / "fdr.md"
+        if (
+            fdr_file.exists()
+            and fdr_file.read_text(encoding="utf-8") == fdr_text
+            and not (existing / "REPORT.md").exists()
+        ):
+            feature_dir = existing
+            break
+    if feature_dir is None:
+        slug = f"{len(list(features_dir.iterdir())) + 1:02d}-" + "".join(
+            c if c.isalnum() else "-" for c in assessment.summary[:32].lower()
+        ).strip("-")
+        feature_dir = features_dir / slug
+        feature_dir.mkdir(exist_ok=True)
+    slug = feature_dir.name
     (feature_dir / "fdr.md").write_text(fdr_text, encoding="utf-8")
 
     prior = "\n".join(f"- {d.name}" for d in sorted(features_dir.iterdir()) if d != feature_dir)
+    from autoproduct.upstream.plan import blast_radius
+
+    radius = blast_radius(root, fdr_text)
     raw = provider_impl.complete(
         model=model,
         system=_FEATURE_PLANNER_SYSTEM,
         user=f"<existing_tree>\n{_file_tree(root)}\n</existing_tree>\n\n"
+        f"<likely_touched_files>\n"
+        + ("\n".join(f"- {p}" for p in radius) or "(none matched)")
+        + "\n</likely_touched_files>\n\n"
         f"<prior_features>\n{prior or '(first feature)'}\n</prior_features>\n\n"
         f"<feature_fdr>\n{fdr_text}\n</feature_fdr>",
         max_tokens=2048,

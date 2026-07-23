@@ -663,6 +663,35 @@ def add(
         raise typer.Exit(code=1)
 
 
+@app.command()
+def scr(
+    slug: str = typer.Argument(..., help="Built spec slug that needs changing"),
+    reason: str = typer.Argument(..., help="Why the spec must change"),
+    repo_dir: str = typer.Option(".", help="Workspace directory"),
+):
+    """Raise a Spec Change Request — the only legal way to change a built
+    spec (ADR-U02). A human approves it with scr-approve."""
+    from autoproduct.upstream.spec import raise_scr
+
+    path = raise_scr(repo_dir, slug, reason)
+    console.print(f"raised: {path.name}\napprove with: autoproduct scr-approve {path.stem.split('-')[1]}")
+
+
+@app.command("scr-approve")
+def scr_approve(
+    number: int = typer.Argument(..., help="SCR number"),
+    repo_dir: str = typer.Option(".", help="Workspace directory"),
+):
+    """Approve an SCR — grants exactly one regeneration of the named spec."""
+    from autoproduct.upstream.spec import approve_scr
+
+    data = approve_scr(repo_dir, number)
+    console.print(
+        f"approved SCR-{number:03d} for spec {data['spec_slug']!r}: {data['reason']}\n"
+        f"the next `autoproduct spec`/`add` touching it may now regenerate it once"
+    )
+
+
 def main() -> None:
     sys.exit(app())
 

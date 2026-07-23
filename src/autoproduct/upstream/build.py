@@ -98,6 +98,20 @@ def _write_files(
                 "tests are read-only (fix the code, or the spec is wrong)"
             )
         content = str(f["new_content"])
+        if is_test and (repo / rel).exists():
+            # Its own skeleton surface is rewritable, but never WEAKENABLE:
+            # assertion_delta rejects removed asserts / added skips citing
+            # the exact node (§13.29.5).
+            from autoproduct.tools.integrity import assertion_delta
+
+            weakened = assertion_delta(
+                (repo / rel).read_text(encoding="utf-8", errors="replace"), content
+            )
+            if weakened:
+                raise ValueError(
+                    f"test weakening rejected in {rel!r}: "
+                    + "; ".join(f"{c.change}: {c.node[:80]}" for c in weakened[:3])
+                )
         if len(content.splitlines()) > _MAX_FILE_LINES:
             raise ValueError(f"{rel} exceeds {_MAX_FILE_LINES} lines")
         target = repo / rel
@@ -105,6 +119,30 @@ def _write_files(
         target.write_text(content, encoding="utf-8")
         written.append(rel)
     return written
+
+
+def _append_design_memory(repo: Path, spec: Spec, files: list[str]) -> None:
+    """product/design.md — the evolving architecture the Spec stage reads
+    back, so feature N+1 extends the design instead of re-deriving it."""
+    path = repo / "product" / "design.md"
+    path.parent.mkdir(exist_ok=True)
+    if not path.exists():
+        path.write_text("# Architecture (evolving — appended per build)\n", encoding="utf-8")
+    entry = (
+        f"\n## {spec.title} ({spec.slug})\n\n{spec.design.strip()}\n\n"
+        f"files: {', '.join(f for f in files if not f.startswith('tests/'))}\n"
+    )
+    path.write_text(path.read_text(encoding="utf-8") + entry, encoding="utf-8")
+
+
+def _write_changelog_fragment(repo: Path, spec: Spec, files: list[str]) -> None:
+    directory = repo / "product" / "changelog"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{spec.slug}.md").write_text(
+        f"**{spec.title}** — {len(spec.criteria)} acceptance criteria, "
+        f"{len(files)} file(s). User-visible: {spec.criteria[0] if spec.criteria else spec.title}\n",
+        encoding="utf-8",
+    )
 
 
 def _file_tree(repo: Path, cap: int = 200) -> str:
@@ -146,6 +184,7 @@ def run_build(
     provider: str = "anthropic",
     model: str = "claude-opus-4-8",
 ) -> BuildResult:
+    started = time.monotonic()
     repo = Path(repo_dir).resolve()
     project = load_project(repo)
     spec: Spec = load_spec(repo, slug)
@@ -238,6 +277,22 @@ def run_build(
     sha = subprocess.run(
         ["git", "rev-parse", "--short", "HEAD"], cwd=repo, capture_output=True, text=True
     ).stdout.strip()
+
+    # Post-build bookkeeping: spec frozen (SCR is the only change channel),
+    # architecture memory appended, changelog fragment written, actuals
+    # recorded for estimate calibration.
+    from autoproduct.upstream.spec import _save as _save_spec
+
+    spec.built = True
+    _save_spec(repo, spec)
+    _append_design_memory(repo, spec, written)
+    _write_changelog_fragment(repo, spec, written)
+    try:
+        from autoproduct.upstream.plan import record_actual
+
+        record_actual(repo, "core", 1.0, time.monotonic() - started)
+    except Exception:  # noqa: BLE001 — bookkeeping never fails a build
+        pass
 
     from autoproduct.tools.wireup import wireup_check
 

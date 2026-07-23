@@ -49,6 +49,7 @@ class Spec(BaseModel):
     lint_issues: list[dict] = Field(default_factory=list)
     critic_issues: list[dict] = Field(default_factory=list)
     revisions: int = 0
+    built: bool = False
 
 
 _WRITER_SYSTEM = f"""You are the {SPECWRITER_MARKER}. Produce a buildable
@@ -141,6 +142,10 @@ def run_spec_stage(
     project: Project = load_project(repo_dir)
     provider_impl = get_provider(provider)
     profile = project.profile_data
+    design_memory = ""
+    design_path = Path(repo_dir) / "product" / "design.md"
+    if design_path.exists():
+        design_memory = design_path.read_text(encoding="utf-8")[-4000:]
     context = yaml.safe_dump(
         {
             "project": project.name,
@@ -150,6 +155,10 @@ def run_spec_stage(
             "stack_hint": profile.get("stack_hint", ""),
         },
         sort_keys=False, allow_unicode=True,
+    ) + (
+        f"\nexisting_architecture: |\n  (extend this — do not re-derive)\n{design_memory}"
+        if design_memory
+        else ""
     )
 
     feedback = ""
@@ -197,6 +206,19 @@ def run_spec_stage(
     has_criteria = bool(spec_data.get("criteria"))
     status = "proposed" if has_criteria and not lint and not gaps else "blocked"
     slug = _slugify(str(spec_data.get("title") or request))
+
+    # SCR guard (ADR-U02): overwriting a spec that has been BUILT is the
+    # drift this system kills — the only legal channel is an approved SCR,
+    # and each approval grants exactly one regeneration.
+    existing_path = _spec_dir(repo_dir, slug) / "spec.yaml"
+    if existing_path.exists():
+        existing = yaml.safe_load(existing_path.read_text(encoding="utf-8")) or {}
+        if existing.get("built") and not _scr_grant(repo_dir, slug):
+            raise PermissionError(
+                f"spec {slug!r} is built and frozen; changing it requires an "
+                f"approved SCR: autoproduct scr {slug} \"<reason>\" then "
+                "autoproduct scr-approve <n>"
+            )
     spec = Spec(
         slug=slug,
         title=str(spec_data.get("title", request))[:120],
@@ -246,6 +268,48 @@ def load_spec(repo_dir: str | Path, slug: str) -> Spec:
     if not path.exists():
         raise FileNotFoundError(f"no spec {slug!r} under {repo_dir}/specs")
     return Spec.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+
+
+def _scr_dir(repo_dir: str | Path) -> Path:
+    return Path(repo_dir) / ".mas" / "scr"
+
+
+def _scr_grant(repo_dir: str | Path, slug: str) -> bool:
+    """An approved, unconsumed SCR for this spec grants one regeneration."""
+    for path in sorted(_scr_dir(repo_dir).glob("SCR-*.yaml")):
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if data.get("spec_slug") == slug and data.get("status") == "approved":
+            data["status"] = "consumed"
+            path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+            return True
+    return False
+
+
+def raise_scr(repo_dir: str | Path, slug: str, reason: str) -> Path:
+    """ADR-U02: the only legal drift channel after a spec is built."""
+    directory = _scr_dir(repo_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    number = len(list(directory.glob("SCR-*.yaml"))) + 1
+    path = directory / f"SCR-{number:03d}.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {"number": number, "spec_slug": slug, "reason": reason, "status": "proposed"},
+            sort_keys=False, allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def approve_scr(repo_dir: str | Path, number: int) -> dict:
+    """The human half of the SCR channel."""
+    path = _scr_dir(repo_dir) / f"SCR-{number:03d}.yaml"
+    if not path.exists():
+        raise FileNotFoundError(f"no SCR-{number:03d}")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["status"] = "approved"
+    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+    return data
 
 
 def approve_spec(repo_dir: str | Path, slug: str) -> Spec:
