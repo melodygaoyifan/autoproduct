@@ -92,5 +92,5 @@ sandbox).
 - One machine, one workspace at a time; multi-instance supervision is a
   documented upgrade path.
 
-MIT · design docs: `../08-*.md` through `../17-*.md` · every PR in this
+MIT · design docs: [autoproduct-design](https://github.com/melodygaoyifan/autoproduct-design) · every PR in this
 repo was reviewed by autoproduct itself.
