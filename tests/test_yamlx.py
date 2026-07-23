@@ -47,3 +47,13 @@ def test_tool_request_with_narration():
 def test_no_mapping_raises():
     with pytest.raises(ValueError, match="no YAML mapping"):
         extract_mapping("just prose, no yaml at all", ("status",))
+
+
+def test_bare_tool_shape_accepted_as_request():
+    """repo_graph on PR #9 emitted `tool: read_file` without the
+    tool_request wrapper — that must parse as a request, not a failure."""
+    from autoproduct.voters.base import Voter
+
+    raw = "tool: read_file\nargs: {path: src/x.py}\n"
+    request = Voter._tool_request(raw)
+    assert request == {"tool": "read_file", "args": {"path": "src/x.py"}}
