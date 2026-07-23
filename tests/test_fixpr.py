@@ -37,6 +37,14 @@ ROOT_CAUSE = RootCauseResult(
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_docker(monkeypatch):
+    # Hermetic: fix verification uses the subprocess path in tests.
+    monkeypatch.setattr(
+        "autoproduct.maintenance.fixpr.docker_available", lambda: False
+    )
+
+
 def test_fix_pr_creates_branch_with_passing_fix(tmp_path):
     repo = _repo(tmp_path)
     attempt = generate_fix_pr(INCIDENT, ROOT_CAUSE, repo_dir=str(repo), provider="mock")
