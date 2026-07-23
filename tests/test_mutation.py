@@ -10,9 +10,10 @@ import pytest
 from autoproduct import testing
 from autoproduct.testing import run_mutation, run_test_gate
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("mutmut") is None, reason="mutmut not on PATH"
-)
+pytestmark = [
+    pytest.mark.skipif(shutil.which("mutmut") is None, reason="mutmut not on PATH"),
+    pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH"),
+]
 
 WELL_TESTED = """\
 from calc import add

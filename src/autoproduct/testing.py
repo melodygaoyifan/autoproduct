@@ -177,11 +177,14 @@ def _pytest_in_docker(worktree: Path) -> TestReport:
         )
         if created.returncode != 0:
             return _pytest_in_subprocess(worktree)  # sandbox unavailable → visible fallback
+        # git is part of the sandbox toolchain (worktree-based suites need
+        # it); installed during the network-up sync phase.
+        base_sync = "apt-get update -qq >/dev/null && apt-get install -y -qq git >/dev/null"
         if (worktree / "uv.lock").exists():
-            sync_cmd = "pip install -q uv && uv sync --project /work --quiet"
+            sync_cmd = f"{base_sync} && pip install -q uv && uv sync --project /work --quiet"
             test_cmd = ["uv", "run", "--project", "/work", "--no-sync", "pytest", "-q"]
         else:
-            sync_cmd = "pip install -q pytest"
+            sync_cmd = f"{base_sync} && pip install -q pytest"
             test_cmd = ["python", "-m", "pytest", "-q"]
         sync = _run(
             ["docker", "exec", name, "sh", "-c", sync_cmd],
