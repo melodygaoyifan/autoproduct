@@ -195,8 +195,24 @@ def _pytest_in_docker(worktree: Path) -> TestReport:
                 detail=(sync.stderr or sync.stdout)[-400:],
                 sandbox="docker",
             )
-        for net in ("bridge",):
+        # Disconnect every network the container is attached to, then VERIFY
+        # none remain — an unverified disconnect would make the
+        # "no-network" label a false guarantee (self-review of PR #8).
+        inspect_fmt = "{{range $k, $_ := .NetworkSettings.Networks}}{{$k}} {{end}}"
+        nets = _run(
+            ["docker", "inspect", "-f", inspect_fmt, name], worktree, timeout=30
+        ).stdout.split()
+        for net in nets:
             _run(["docker", "network", "disconnect", net, name], worktree, timeout=30)
+        remaining = _run(
+            ["docker", "inspect", "-f", inspect_fmt, name], worktree, timeout=30
+        ).stdout.split()
+        if remaining:
+            return TestReport(
+                status="error",
+                summary=f"could not isolate sandbox network (still attached: {remaining})",
+                sandbox="docker",
+            )
         proc = _run(["docker", "exec", name, *test_cmd], worktree)
         return _classify(
             proc.returncode, proc.stdout or proc.stderr, sandbox="docker:no-network"
