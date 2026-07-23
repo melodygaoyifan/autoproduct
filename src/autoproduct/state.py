@@ -78,6 +78,9 @@ class VoterFinding(BaseModel):
     verification: str | None = Field(
         default=None, description="VERIFIED / NOT_REPRODUCIBLE / NEEDS_RUNTIME (§09.4.6)"
     )
+    score: int | None = Field(
+        default=None, ge=0, le=100, description="Composite confidence score (§09.4.7)"
+    )
 
 
 class VoterOutput(BaseModel):
@@ -86,6 +89,11 @@ class VoterOutput(BaseModel):
     voter: str
     model: str
     status: VoterStatus
+    substituted_from: str | None = Field(
+        default=None,
+        description="Set when the spec's primary provider was unavailable and "
+        "the fallback ran instead — same-family substitution is visible, never silent",
+    )
     findings: list[VoterFinding] = Field(default_factory=list)
     missing_sources: list[str] = Field(
         default_factory=list, description="Required when status is BLOCKED_MISSING_CONTEXT"
@@ -115,6 +123,7 @@ class ReviewState(TypedDict, total=False):
     project_context: str  # CLAUDE.md contents, if present
     tool_reports: Annotated[list[dict[str, Any]], operator.add]
     voter_outputs: Annotated[list[dict[str, Any]], operator.add]
+    verified_outputs: list[dict[str, Any]]  # voter_outputs after §09.4.6/§09.4.7
     leader: dict[str, Any]  # serialized LeaderResult
     artifacts_dir: str
     error: str | None

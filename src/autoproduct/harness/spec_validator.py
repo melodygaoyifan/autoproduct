@@ -26,6 +26,11 @@ class VoterSpecValidationError(Exception):
     pass
 
 
+class FallbackSpec(BaseModel):
+    provider: str
+    model: str
+
+
 class VoterSpec(BaseModel):
     name: str = Field(pattern=r"^[a-z][a-z0-9_]+$")
     description: str
@@ -36,6 +41,12 @@ class VoterSpec(BaseModel):
     risk_ceiling: int = Field(default=0, ge=0, le=VOTER_RISK_CEILING)
     timeout_s: int = Field(default=120, gt=0)
     max_retries: int = Field(default=3, ge=0, le=3)
+    fallback: FallbackSpec | None = Field(
+        default=None,
+        description="Bootstrap substitute when the primary provider's key is "
+        "absent; substitution is recorded in the voter output, never silent "
+        "(Principle 4 requires visible same-family justification)",
+    )
 
 
 class LoadedSkill(BaseModel):
@@ -59,10 +70,11 @@ class SpecValidator:
             spec = VoterSpec.model_validate(raw)
         except ValidationError as exc:
             raise VoterSpecValidationError(f"{path}: invalid spec: {exc}") from exc
-        if spec.provider not in KNOWN_PROVIDERS:
-            raise VoterSpecValidationError(
-                f"{path}: unknown provider {spec.provider!r} (known: {sorted(KNOWN_PROVIDERS)})"
-            )
+        for provider in filter(None, [spec.provider, spec.fallback and spec.fallback.provider]):
+            if provider not in KNOWN_PROVIDERS:
+                raise VoterSpecValidationError(
+                    f"{path}: unknown provider {provider!r} (known: {sorted(KNOWN_PROVIDERS)})"
+                )
         body = match.group(2).strip()
         if not body:
             raise VoterSpecValidationError(f"{path}: skill body is empty")

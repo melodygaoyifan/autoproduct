@@ -3,32 +3,37 @@
 Deterministic control flow, probabilistic analysis (Principle 1): this
 module decides what runs next; LLMs only ever run inside voter nodes.
 
-Skeleton graph:
+Current graph:
 
-    dor_gate -> init -> analyze -> vote -> leader -> post
+    dor_gate -> init -> analyze -> vote -> verify -> leader -> post
         \\-(not ready)-> post
 
-tools / verify / peer / adversarial_test nodes land in later milestones and
-slot between analyze and post without changing this topology's contract.
+tools / peer / adversarial_test nodes land in later milestones and slot
+between analyze and post without changing this topology's contract.
 """
 
 from __future__ import annotations
 
 import functools
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
 from langgraph.graph import END, StateGraph
 
 from autoproduct import leader as leader_mod
+from autoproduct import scoring, verify
 from autoproduct.diff import ParsedDiff, fetch_diff, parse_unified_diff
 from autoproduct.mirror import YamlMirror
 from autoproduct.orchestrator.mode_router import select_mode
-from autoproduct.state import LeaderResult, ReviewState, VoterOutput
+from autoproduct.state import LeaderResult, ReviewState, VoterFinding, VoterOutput
 from autoproduct.voters import load_voters
 
 MAX_REVIEWABLE_LINES = 2000
+
+# fast mode = the single cheap reviewer from §08.3.5 (style runs on Haiku).
+FAST_MODE_ROSTER = {"style"}
 
 
 def dor_gate_node(state: ReviewState, *, repo_dir: str) -> dict[str, Any]:
@@ -69,15 +74,48 @@ def vote_node(
     state: ReviewState, *, skills_dir: str, provider_override: str | None
 ) -> dict[str, Any]:
     voters = load_voters(skills_dir, provider_override=provider_override)
-    outputs = [
-        voter.run(state["diff"]["raw"], context=state.get("project_context", ""))
-        for voter in voters
-    ]
+    if state.get("mode") == "fast":
+        fast = [v for v in voters if v.spec.name in FAST_MODE_ROSTER]
+        voters = fast or voters[:1]
+    diff_raw = state["diff"]["raw"]
+    context = state.get("project_context", "")
+    with ThreadPoolExecutor(max_workers=len(voters)) as pool:
+        outputs = list(pool.map(lambda v: v.run(diff_raw, context=context), voters))
     return {"voter_outputs": [o.model_dump(mode="json") for o in outputs]}
 
 
-def leader_node(state: ReviewState) -> dict[str, Any]:
+def verify_node(
+    state: ReviewState, *, skills_dir: str, provider_override: str | None
+) -> dict[str, Any]:
+    """§09.4.6: every finding re-examined by a fresh agent, then scored
+    (§09.4.7). Skipped in fast mode — the cheap path stays cheap."""
     outputs = [VoterOutput.model_validate(o) for o in state["voter_outputs"]]
+    if state.get("mode") == "fast":
+        return {"verified_outputs": [o.model_dump(mode="json") for o in outputs]}
+
+    skills = {v.spec.name: v.skill for v in load_voters(skills_dir)}
+    diff_raw = state["diff"]["raw"]
+
+    def check(finding: VoterFinding) -> None:
+        provider, model, fallback = verify.verifier_config_for(skills[finding.voter])
+        if provider_override:
+            provider, fallback = provider_override, None
+        finding.verification = verify.verify_finding(
+            finding, diff_raw, provider=provider, model=model, fallback=fallback
+        )
+
+    todo = [f for o in outputs for f in o.findings]
+    if todo:
+        with ThreadPoolExecutor(max_workers=min(8, len(todo))) as pool:
+            list(pool.map(check, todo))
+        for finding in todo:
+            finding.score = scoring.score_finding(finding, todo)
+    return {"verified_outputs": [o.model_dump(mode="json") for o in outputs]}
+
+
+def leader_node(state: ReviewState) -> dict[str, Any]:
+    raw = state.get("verified_outputs") or state["voter_outputs"]
+    outputs = [VoterOutput.model_validate(o) for o in raw]
     result = leader_mod.synthesize(outputs)
     return {"leader": result.model_dump(mode="json")}
 
@@ -137,6 +175,15 @@ def build_graph(
             ),
         ),
     )
+    graph.add_node(
+        "verify",
+        mirrored(
+            "verify",
+            functools.partial(
+                verify_node, skills_dir=skills_dir, provider_override=provider_override
+            ),
+        ),
+    )
     graph.add_node("leader", mirrored("leader", leader_node))
     graph.add_node("post", functools.partial(post_node, mirror=mirror))
 
@@ -146,7 +193,8 @@ def build_graph(
     )
     graph.add_edge("init", "analyze")
     graph.add_edge("analyze", "vote")
-    graph.add_edge("vote", "leader")
+    graph.add_edge("vote", "verify")
+    graph.add_edge("verify", "leader")
     graph.add_edge("leader", "post")
     graph.add_edge("post", END)
     return graph.compile(), review_id

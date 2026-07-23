@@ -33,6 +33,7 @@ def test_planted_bugs_found_end_to_end(tmp_path, planted_diff_text, skills_dir):
         "init.yaml",
         "analyze.yaml",
         "vote.yaml",
+        "verify.yaml",
         "leader.yaml",
         "final.yaml",
     ]

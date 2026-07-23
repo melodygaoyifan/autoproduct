@@ -9,6 +9,7 @@ full six-voter roster.
 
 from __future__ import annotations
 
+from autoproduct import scoring
 from autoproduct.state import (
     Confidence,
     LeaderResult,
@@ -22,6 +23,19 @@ from autoproduct.state import (
 _ACTIONABLE_SEVERITIES = {Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM}
 
 
+def _keep(finding: VoterFinding, all_findings: list[VoterFinding]) -> bool:
+    if finding.verification is None:
+        # Verification pass didn't run (fast mode): fall back to the
+        # coarse self-confidence filter.
+        return not (
+            finding.confidence is Confidence.POSSIBLE
+            and finding.severity not in (Severity.CRITICAL, Severity.HIGH)
+        )
+    if finding.score is None:
+        finding.score = scoring.score_finding(finding, all_findings)
+    return scoring.passes_threshold(finding)
+
+
 def synthesize(outputs: list[VoterOutput]) -> LeaderResult:
     blocked = [o.voter for o in outputs if o.status is not VoterStatus.OK]
     tool_failures = [
@@ -33,15 +47,13 @@ def synthesize(outputs: list[VoterOutput]) -> LeaderResult:
         if o.status is VoterStatus.BLOCKED_REQUIREMENT_CONFLICT
     ]
 
+    all_findings = [f for o in outputs for f in o.findings]
     kept: list[VoterFinding] = []
     seen: set[tuple[str, int, str]] = set()
     dropped = 0
     for output in outputs:
         for finding in output.findings:
-            if finding.confidence is Confidence.POSSIBLE and finding.severity not in (
-                Severity.CRITICAL,
-                Severity.HIGH,
-            ):
+            if not _keep(finding, all_findings):
                 dropped += 1
                 continue
             key = (finding.file_path, finding.line_start, finding.title.lower())

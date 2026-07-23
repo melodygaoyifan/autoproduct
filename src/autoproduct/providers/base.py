@@ -33,7 +33,12 @@ def register(cls: type[Provider]) -> type[Provider]:
 
 def get_provider(name: str) -> Provider:
     # Imports deferred so an SDK missing for an unused provider never breaks startup.
-    from autoproduct.providers import anthropic_provider, mock  # noqa: F401
+    from autoproduct.providers import (  # noqa: F401
+        anthropic_provider,
+        google_provider,
+        mock,
+        openai_compat,
+    )
 
     if name not in _REGISTRY:
         raise ProviderError(

@@ -14,28 +14,41 @@ autoproduct review <target> [--provider mock] [--mode fast|standard|deep]
 `<target>` is a GitHub PR URL (needs `gh` auth) or a local git range
 (`main...HEAD`, `HEAD`, …).
 
-Pipeline: **Gate 1 DoR → init → analyze (mode router) → vote → leader → post**
+Pipeline: **Gate 1 DoR → init → analyze (mode router) → vote (parallel ×6) →
+verify → leader → post**
 
 - Deterministic mode router (§08.3.5.1) — conservative, escalates on
-  auth/billing paths, new dependencies, safety-removal signatures.
+  auth/billing paths, new dependencies, safety-removal signatures. Fast mode
+  runs the single cheap (Haiku) reviewer only.
 - Spec-driven voter loading (doc 11): skills are markdown + YAML frontmatter,
   validated by `SpecValidator`; invalid specs refuse to load; voter tool risk
   ceiling ≤ L2 enforced at the schema level.
-- Correctness voter (DAPLab P2/P3/P4/P9 slice) with `<untrusted_*>` prompt
-  hygiene and BLOCKED_* statuses instead of silent empties.
-- Deterministic Leader: evidence filter, dedupe, 8-verdict taxonomy
-  (§09.4.4.7) with escalation triggers.
+- Full six-voter roster (Correctness, Security, Performance, Context,
+  Repo Graph, Style), each mapped to its DAPLab taxonomy slice, with
+  `<untrusted_*>` prompt hygiene and BLOCKED_* statuses instead of silent
+  empties. Heterogeneous providers (Anthropic, OpenAI, Google, xAI); when a
+  provider's key is absent, the spec's declared fallback runs and the
+  substitution is recorded in the output envelope — never silent.
+- Fresh-agent verification (§09.4.6): every finding re-examined by an
+  isolated verifier prompted to refute it; NOT_REPRODUCIBLE findings score 0.
+- Composite confidence scoring (§09.4.7): self-confidence (40) +
+  verification (40) + cross-voter corroboration (20), threshold-gated
+  reporting (80 default / 60 for critical+high).
+- Deterministic Leader: score filter, dedupe, 8-verdict taxonomy
+  (§09.4.4.7) with escalation triggers (P6-critical → ESCALATE_SECURITY_RISK
+  — exercised live).
 - YAML mirror audit trail per node under `.mas/reviews/<id>/`.
 - Hermetic test suite (mock provider, no network): `uv run pytest`.
 
 ## What's next (per doc 10)
 
-1. Day-0 calibration with a real `ANTHROPIC_API_KEY` (real PR, real voter).
-2. Remaining five voters + heterogeneous providers (OpenAI, Google, xAI).
-3. Fresh-agent verification pass (§09.4.6) and confidence scoring (§09.4.7).
-4. Deterministic tools node: Semgrep, Bandit, TruffleHog, pip-audit,
+1. LLM Leader synthesis: semantic dedupe (exact-key dedupe keeps paraphrased
+   duplicates from different voters), narrative summary, severity re-rank.
+2. Deterministic tools node: Semgrep, Bandit, TruffleHog, pip-audit,
    slopsquat_check, csrf_ssrf_probe.
-5. HITL via GitHub Issues; mutation testing in isolated worktrees; the
+3. Voter tool access (read_file, grep, tree_sitter_query) so repo_graph can
+   trace real cross-file references instead of returning BLOCKED.
+4. HITL via GitHub Issues; mutation testing in isolated worktrees; the
    compounding loop.
 
 ## Layout

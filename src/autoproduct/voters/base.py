@@ -17,7 +17,7 @@ from pydantic import ValidationError
 
 from autoproduct.harness import SpecValidator
 from autoproduct.harness.spec_validator import LoadedSkill
-from autoproduct.providers import get_provider
+from autoproduct.providers import ProviderError, get_provider
 from autoproduct.state import VoterFinding, VoterOutput, VoterStatus
 
 _SYSTEM_TEMPLATE = """You are the {name} voter in a multi-agent code review system.
@@ -68,26 +68,43 @@ class Voter:
 
     def run(self, diff_text: str, context: str = "") -> VoterOutput:
         start = time.monotonic()
-        provider = get_provider(self.provider_name)
         system = _SYSTEM_TEMPLATE.format(name=self.spec.name, body=self.skill.body)
         user = _USER_TEMPLATE.format(context=context or "(none)", diff=diff_text)
 
+        provider_name, model = self.provider_name, self.spec.model
+        substituted_from = None
         last_error = ""
-        for _ in range(self.spec.max_retries + 1):
+        attempts = 0
+        while attempts <= self.spec.max_retries:
             try:
-                raw = provider.complete(
-                    model=self.spec.model, system=system, user=user
+                raw = get_provider(provider_name).complete(
+                    model=model, system=system, user=user
                 )
                 output = self._parse(raw)
+                output.model = model
+                output.substituted_from = substituted_from
                 output.duration_s = time.monotonic() - start
                 return output
-            except Exception as exc:  # noqa: BLE001 — every failure class retries
+            except ProviderError as exc:
+                # Configuration failure (missing key), not transient: switch
+                # to the spec's declared fallback — visibly — or give up.
+                # The switch does not consume a retry.
                 last_error = f"{type(exc).__name__}: {exc}"
+                fallback = self.spec.fallback
+                if fallback and provider_name == self.provider_name:
+                    substituted_from = f"{provider_name}/{model} ({exc})"
+                    provider_name, model = fallback.provider, fallback.model
+                else:
+                    break
+            except Exception as exc:  # noqa: BLE001 — transient classes retry
+                last_error = f"{type(exc).__name__}: {exc}"
+                attempts += 1
         return VoterOutput(
             voter=self.spec.name,
-            model=self.spec.model,
+            model=model,
             status=VoterStatus.BLOCKED_TOOL_FAILURE,
-            notes=f"failed after {self.spec.max_retries + 1} attempts: {last_error}",
+            substituted_from=substituted_from,
+            notes=f"failed after retries: {last_error}",
             duration_s=time.monotonic() - start,
         )
 

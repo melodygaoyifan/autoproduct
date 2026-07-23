@@ -28,6 +28,10 @@ class MockProvider(Provider):
     name = "mock"
 
     def complete(self, *, model: str, system: str, user: str, max_tokens: int = 4096) -> str:
+        from autoproduct.verify import VERIFIER_MARKER
+
+        if VERIFIER_MARKER in system:
+            return self._verify(user)
         files = _FILE_HEADER.findall(user)
         file_path = files[0] if files else "unknown"
         findings = []
@@ -48,3 +52,20 @@ class MockProvider(Provider):
                         }
                     )
         return yaml.safe_dump({"status": "OK", "findings": findings}, sort_keys=False)
+
+    def _verify(self, user: str) -> str:
+        """Refute-by-quote: VERIFIED iff the claimed evidence text actually
+        appears in the diff section of the prompt."""
+        evidence_match = re.search(r"^evidence: (.+)$", user, re.MULTILINE)
+        diff_match = re.search(r"<untrusted_diff>\n(.*)</untrusted_diff>", user, re.DOTALL)
+        verified = bool(
+            evidence_match
+            and diff_match
+            and evidence_match.group(1).strip() in diff_match.group(1)
+        )
+        return yaml.safe_dump(
+            {
+                "verdict": "VERIFIED" if verified else "NOT_REPRODUCIBLE",
+                "reason": "mock quote check",
+            }
+        )
