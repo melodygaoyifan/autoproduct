@@ -35,6 +35,10 @@ MAX_REVIEWABLE_LINES = 2000
 # fast mode = the single cheap reviewer from §08.3.5 (style runs on Haiku).
 FAST_MODE_ROSTER = {"style"}
 
+# The Leader is its own model invocation, never one of the voters (charter
+# rule 5). Engineering default per the roster in §09.4.
+LEADER_PROVIDER = ("anthropic", "claude-opus-4-8")
+
 
 def dor_gate_node(state: ReviewState, *, repo_dir: str) -> dict[str, Any]:
     """Gate 1 — Definition of Ready. Cheap deterministic checks before any
@@ -113,10 +117,15 @@ def verify_node(
     return {"verified_outputs": [o.model_dump(mode="json") for o in outputs]}
 
 
-def leader_node(state: ReviewState) -> dict[str, Any]:
+def leader_node(state: ReviewState, *, provider_override: str | None) -> dict[str, Any]:
     raw = state.get("verified_outputs") or state["voter_outputs"]
     outputs = [VoterOutput.model_validate(o) for o in raw]
     result = leader_mod.synthesize(outputs)
+    if state.get("mode") != "fast":
+        provider, model = (
+            (provider_override, "leader") if provider_override else LEADER_PROVIDER
+        )
+        result = leader_mod.semantic_merge(result, provider=provider, model=model)
     return {"leader": result.model_dump(mode="json")}
 
 
@@ -184,7 +193,12 @@ def build_graph(
             ),
         ),
     )
-    graph.add_node("leader", mirrored("leader", leader_node))
+    graph.add_node(
+        "leader",
+        mirrored(
+            "leader", functools.partial(leader_node, provider_override=provider_override)
+        ),
+    )
     graph.add_node("post", functools.partial(post_node, mirror=mirror))
 
     graph.set_entry_point("dor_gate")

@@ -28,10 +28,13 @@ class MockProvider(Provider):
     name = "mock"
 
     def complete(self, *, model: str, system: str, user: str, max_tokens: int = 4096) -> str:
+        from autoproduct.leader import LEADER_MARKER
         from autoproduct.verify import VERIFIER_MARKER
 
         if VERIFIER_MARKER in system:
             return self._verify(user)
+        if LEADER_MARKER in system:
+            return self._lead(user)
         files = _FILE_HEADER.findall(user)
         file_path = files[0] if files else "unknown"
         findings = []
@@ -52,6 +55,28 @@ class MockProvider(Provider):
                         }
                     )
         return yaml.safe_dump({"status": "OK", "findings": findings}, sort_keys=False)
+
+    def _lead(self, user: str) -> str:
+        """Cluster findings that share a file and overlap within 2 lines."""
+        rows = re.findall(
+            r"^(\d+)\. \[\w+\] (\S+?):(\d+)-(\d+)", user, re.MULTILINE
+        )
+        clusters: list[list[int]] = []
+        placed: dict[int, list[int]] = {}
+        parsed = [(int(n), path, int(a), int(b)) for n, path, a, b in rows]
+        for n, path, a, b in parsed:
+            for m, mpath, ma, mb in parsed:
+                if m in placed and mpath == path and a <= mb + 2 and ma <= b + 2:
+                    placed[m].append(n)
+                    placed[n] = placed[m]
+                    break
+            if n not in placed:
+                cluster = [n]
+                placed[n] = cluster
+                clusters.append(cluster)
+        return yaml.safe_dump(
+            {"clusters": clusters, "summary": "mock leader summary"}
+        )
 
     def _verify(self, user: str) -> str:
         """Refute-by-quote: VERIFIED iff the claimed evidence text actually

@@ -34,22 +34,23 @@ verify → leader → post**
 - Composite confidence scoring (§09.4.7): self-confidence (40) +
   verification (40) + cross-voter corroboration (20), threshold-gated
   reporting (80 default / 60 for critical+high).
-- Deterministic Leader: score filter, dedupe, 8-verdict taxonomy
-  (§09.4.4.7) with escalation triggers (P6-critical → ESCALATE_SECURITY_RISK
-  — exercised live).
+- Two-half Leader: deterministic score filter / exact dedupe / verdict
+  selection (§09.4.4.7, escalation triggers exercised live), then LLM
+  semantic merge — paraphrased same-defect findings from different voters
+  cluster into one, corroborators credited, narrative summary written. The
+  LLM half degrades to the deterministic result on any failure; it can
+  improve the report but never gate the pipeline.
 - YAML mirror audit trail per node under `.mas/reviews/<id>/`.
 - Hermetic test suite (mock provider, no network): `uv run pytest`.
 
 ## What's next (per doc 10)
 
-1. LLM Leader synthesis: semantic dedupe (exact-key dedupe keeps paraphrased
-   duplicates from different voters), narrative summary, severity re-rank.
-2. Deterministic tools node: Semgrep, Bandit, TruffleHog, pip-audit,
+1. Deterministic tools node: Semgrep, Bandit, TruffleHog, pip-audit,
    slopsquat_check, csrf_ssrf_probe.
-3. Voter tool access (read_file, grep, tree_sitter_query) so repo_graph can
+2. Voter tool access (read_file, grep, tree_sitter_query) so repo_graph can
    trace real cross-file references instead of returning BLOCKED.
-4. HITL via GitHub Issues; mutation testing in isolated worktrees; the
-   compounding loop.
+3. PR comment posting; HITL via GitHub Issues; mutation testing in isolated
+   worktrees; the compounding loop.
 
 ## Layout
 
