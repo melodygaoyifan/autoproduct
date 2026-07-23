@@ -36,7 +36,9 @@ def test_template_and_guide_written(tmp_path):
     path = write_template(tmp_path / "w")
     assert path.name == "FDR.md"
     assert "不需要任何技术词汇" in path.read_text()
-    assert "Three rules" in (tmp_path / "w" / "FDR-GUIDE.md").read_text()
+    guide = (tmp_path / "w" / "FDR-GUIDE.md").read_text()
+    assert "Four rules" in guide
+    assert "One FDR = one thing" in guide  # the granularity contract
 
 
 def test_inadequate_fdr_yields_questions_not_a_build(tmp_path):

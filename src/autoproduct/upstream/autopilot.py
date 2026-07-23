@@ -258,6 +258,151 @@ def _fix_iteration(root: Path, provider: str, model: str, findings) -> bool:
     return committed.returncode == 0
 
 
+from autoproduct.upstream.plan import PLANNER_MARKER as _PLANNER_MARKER
+
+_FEATURE_PLANNER_SYSTEM = f"""You are the {_PLANNER_MARKER},
+planning ONE FEATURE CHANGE against an existing product.
+
+Rules:
+- 1-6 tasks; each is one spec+build cycle. Small features are ONE task.
+- You see the existing file tree and prior features: plan integration with
+  what exists — never plan rebuilding existing surfaces.
+- depends_on only within this feature's tasks; no cycles.
+
+Respond with ONLY YAML:
+tasks:
+  - id: f1
+    title: ...
+    description: one sentence, phrased as a spec request
+    depends_on: []
+    lane: api
+    estimate_hours: 3
+"""
+
+
+def run_feature(
+    workspace: str | Path,
+    fdr_path: str | Path,
+    *,
+    provider: str = "anthropic",
+    model: str = "claude-opus-4-8",
+    yes: bool = False,
+) -> AutopilotResult:
+    """Per-feature FDR on an existing product (granularity contract: one
+    FDR = one feature change). Same gates, feature-scoped artifacts under
+    product/features/."""
+    from autoproduct.upstream.build import _file_tree
+    from autoproduct.upstream.plan import Task, dag_check
+
+    root = Path(workspace).resolve()
+    fdr_text = Path(fdr_path).read_text(encoding="utf-8")
+    provider_impl = get_provider(provider)
+
+    assessment = assess_fdr(fdr_text, provider=provider, model=model)
+    if not assessment.ready:
+        questions = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(assessment.questions))
+        (root / "FDR-QUESTIONS.md").write_text(
+            f"# 请回答这些问题 / Please answer\n\n{assessment.summary}\n\n{questions}\n",
+            encoding="utf-8",
+        )
+        return AutopilotResult(status="needs_answers", assessment=assessment)
+
+    features_dir = root / "product" / "features"
+    features_dir.mkdir(parents=True, exist_ok=True)
+    slug = f"{len(list(features_dir.iterdir())) + 1:02d}-" + "".join(
+        c if c.isalnum() else "-" for c in assessment.summary[:32].lower()
+    ).strip("-")
+    feature_dir = features_dir / slug
+    feature_dir.mkdir(exist_ok=True)
+    (feature_dir / "fdr.md").write_text(fdr_text, encoding="utf-8")
+
+    prior = "\n".join(f"- {d.name}" for d in sorted(features_dir.iterdir()) if d != feature_dir)
+    raw = provider_impl.complete(
+        model=model,
+        system=_FEATURE_PLANNER_SYSTEM,
+        user=f"<existing_tree>\n{_file_tree(root)}\n</existing_tree>\n\n"
+        f"<prior_features>\n{prior or '(first feature)'}\n</prior_features>\n\n"
+        f"<feature_fdr>\n{fdr_text}\n</feature_fdr>",
+        max_tokens=2048,
+    )
+    data = extract_mapping(raw, ("tasks",))
+    tasks = [Task.model_validate(t) for t in data.get("tasks", [])]
+    issues = dag_check(tasks)
+    if issues:
+        return AutopilotResult(status="failed", assessment=assessment,
+                               confirmation=f"plan dag_check failed: {issues}")
+    (feature_dir / "plan.yaml").write_text(
+        yaml.safe_dump([t.model_dump() for t in tasks], sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+    confirmation = provider_impl.complete(
+        model=model,
+        system=_CONFIRM_SYSTEM,
+        user=yaml.safe_dump(
+            {"feature": assessment.summary,
+             "tasks": [t.title for t in tasks]},
+            sort_keys=False, allow_unicode=True,
+        )
+        + f"\n<fdr_language_sample>\n{fdr_text[:400]}\n</fdr_language_sample>",
+        max_tokens=1024,
+    )
+    (feature_dir / "CONFIRMATION.md").write_text(confirmation, encoding="utf-8")
+    if not yes:
+        return AutopilotResult(
+            status="awaiting_confirmation", assessment=assessment, confirmation=confirmation
+        )
+
+    auto_approvals = [f"feature plan ({slug}): auto — dag_check passed"]
+    outcomes: list[TaskOutcome] = []
+    for task in _topo_order(tasks):
+        spec = run_spec_stage(
+            root, f"{task.description} (task:{slug}-{task.id})", provider=provider
+        )
+        if spec.status != "proposed":
+            outcomes.append(TaskOutcome(task_id=task.id, title=task.title,
+                                        status="spec_blocked"))
+            continue
+        approve_spec(root, spec.slug)
+        auto_approvals.append(f"Gate U3 ({spec.slug}): auto — ears_lint + coverage passed")
+        built = run_build(root, spec.slug, provider=provider, model=model)
+        verdict = None
+        if built.status == "built":
+            review = _review_head(root, provider)
+            verdict = review.verdict.value if review else None
+            serious = [f for f in (review.findings if review else [])
+                       if f.severity.value in ("critical", "high")]
+            if serious and _fix_iteration(root, provider, model, serious):
+                auto_approvals.append(
+                    f"fix iteration ({spec.slug}): {len(serious)} finding(s) repaired"
+                )
+                re_review = _review_head(root, provider)
+                if re_review:
+                    verdict = re_review.verdict.value
+        outcomes.append(TaskOutcome(task_id=task.id, title=task.title,
+                                    status=built.status, review_verdict=verdict,
+                                    detail=built.detail))
+
+    report = provider_impl.complete(
+        model=model,
+        system=_REPORT_SYSTEM,
+        user=yaml.safe_dump(
+            {"fdr_language_sample": fdr_text[:400], "feature": slug,
+             "outcomes": [o.model_dump() for o in outcomes],
+             "auto_approvals": auto_approvals},
+            sort_keys=False, allow_unicode=True,
+        ),
+        max_tokens=2048,
+    )
+    (feature_dir / "REPORT.md").write_text(report, encoding="utf-8")
+    built_count = sum(1 for o in outcomes if o.status == "built")
+    return AutopilotResult(
+        status="completed" if outcomes and built_count == len(outcomes) else "failed",
+        assessment=assessment, confirmation=confirmation, outcomes=outcomes,
+        report_path=str(feature_dir / "REPORT.md"), auto_approvals=auto_approvals,
+    )
+
+
 def _topo_order(tasks):
     done: set[str] = set()
     ordered = []

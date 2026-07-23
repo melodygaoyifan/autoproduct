@@ -11,6 +11,7 @@ Bounds: ≤12 files, ≤500 lines each, repo-relative paths only, never
 
 from __future__ import annotations
 
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -37,6 +38,11 @@ class BuildResult(BaseModel):
     status: str  # built | build_failed | error
     iterations: int = 0
     files_written: list[str] = Field(default_factory=list)
+    modified_existing: list[str] = Field(
+        default_factory=list, description="scope_check-lite: pre-existing files "
+        "the implementer changed — visible, reviewed, never silent"
+    )
+    wireup_issues: list[str] = Field(default_factory=list)
     test_summary: str = ""
     commit: str | None = None
     detail: str = ""
@@ -69,12 +75,28 @@ def _run_tests(repo: Path):
     )
 
 
-def _write_files(repo: Path, files: list[dict]) -> list[str]:
+def _write_files(
+    repo: Path, files: list[dict], *, allowed_test_paths: set[str] | None = None
+) -> list[str]:
     written = []
     for f in files[:_MAX_FILES]:
         rel = str(f["path"]).lstrip("/")
         if any(rel.startswith(p) for p in _FORBIDDEN_PREFIXES) or ".." in rel:
             raise ValueError(f"implementer touched forbidden path {rel!r}")
+        # §13.29.5 write-lock: existing non-skeleton tests are read-only to
+        # the implementer. A blocking test is either its bug or a spec gap —
+        # never a test to edit. (Reward-hacking defense, structural.)
+        is_test = rel.startswith("tests/") or Path(rel).name.startswith("test_")
+        if (
+            is_test
+            and (repo / rel).exists()
+            and allowed_test_paths is not None
+            and rel not in allowed_test_paths
+        ):
+            raise ValueError(
+                f"implementer tried to modify existing test {rel!r} — existing "
+                "tests are read-only (fix the code, or the spec is wrong)"
+            )
         content = str(f["new_content"])
         if len(content.splitlines()) > _MAX_FILE_LINES:
             raise ValueError(f"{rel} exceeds {_MAX_FILE_LINES} lines")
@@ -83,6 +105,38 @@ def _write_files(repo: Path, files: list[dict]) -> list[str]:
         target.write_text(content, encoding="utf-8")
         written.append(rel)
     return written
+
+
+def _file_tree(repo: Path, cap: int = 200) -> str:
+    lines = []
+    for path in sorted(repo.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(repo)
+        if any(part in (".git", ".mas", "__pycache__", "node_modules", ".venv") for part in rel.parts):
+            continue
+        lines.append(str(rel))
+        if len(lines) >= cap:
+            lines.append("… (truncated)")
+            break
+    return "\n".join(lines)
+
+
+def _related_sources(repo: Path, spec: Spec, cap_files: int = 6, cap_lines: int = 200) -> str:
+    """Existing files the spec's design mentions — the implementer extends
+    the product, it does not recreate it (feature-FDR awareness)."""
+    mentioned = re.findall(r"[\w/]+\.(?:py|js|ts|wxml|wxss|json|html)", spec.design)
+    blocks = []
+    for rel in dict.fromkeys(mentioned):
+        path = repo / rel
+        if path.is_file():
+            text = "\n".join(
+                path.read_text(encoding="utf-8", errors="replace").splitlines()[:cap_lines]
+            )
+            blocks.append(f'<existing_file path="{rel}">\n{text}\n</existing_file>')
+        if len(blocks) >= cap_files:
+            break
+    return "\n\n".join(blocks)
 
 
 def run_build(
@@ -106,13 +160,24 @@ def run_build(
     provider_impl = get_provider(provider)
     claude_md = repo / "CLAUDE.md"
     constraints = claude_md.read_text(encoding="utf-8") if claude_md.exists() else ""
+    existing = _related_sources(repo, spec)
     base_user = (
         f"<constraints>\n{constraints}\n</constraints>\n\n"
+        f"<repo_tree>\n{_file_tree(repo)}\n</repo_tree>\n\n"
+        + (f"{existing}\n\n" if existing else "")
+        + "You are EXTENDING the existing product above — integrate with it, "
+        "never recreate it. Existing test files are read-only to you.\n\n"
         f"<spec>\n{yaml.safe_dump(spec.model_dump(include={'title', 'design', 'criteria'}), sort_keys=False, allow_unicode=True)}"
         f"test_skeletons:\n"
         + "\n".join(f"- {s.path}: {s.purpose} (covers {s.covers})" for s in spec.test_skeletons)
         + "\n</spec>"
     )
+    allowed_tests = {s.path for s in spec.test_skeletons}
+    pre_existing = {
+        str(p.relative_to(repo))
+        for p in repo.rglob("*")
+        if p.is_file() and ".git" not in p.parts and ".mas" not in p.parts
+    }
 
     feedback = ""
     written: list[str] = []
@@ -127,7 +192,9 @@ def run_build(
         )
         try:
             data = extract_mapping(raw, ("files",))
-            written = _write_files(repo, data.get("files") or [])
+            written = _write_files(
+                repo, data.get("files") or [], allowed_test_paths=allowed_tests
+            )
         except ValueError as exc:
             return BuildResult(slug=slug, status="error", iterations=iteration, detail=str(exc))
         if not written:
@@ -171,11 +238,17 @@ def run_build(
     sha = subprocess.run(
         ["git", "rev-parse", "--short", "HEAD"], cwd=repo, capture_output=True, text=True
     ).stdout.strip()
+
+    from autoproduct.tools.wireup import wireup_check
+
+    wireup = wireup_check(repo)
     return BuildResult(
         slug=slug,
         status="built",
         iterations=iteration,
         files_written=written,
+        modified_existing=sorted(set(written) & pre_existing),
+        wireup_issues=[f.title for f in wireup.findings][:10],
         test_summary=report.summary,
         commit=sha,
     )

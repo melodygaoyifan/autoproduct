@@ -219,7 +219,7 @@ class MockProvider(Provider):
         when the request asks for it, clean once revision feedback arrives.
         A task:<id> marker in the request uniquifies the title/tests so
         autopilot runs produce distinct specs per task."""
-        task = re.search(r"task:(\w+)", user)
+        task = re.search(r"task:([\w-]+)", user)
         suffix = f" {task.group(1)}" if task else ""
         vague_first_pass = "make it vague" in user and "revision_feedback" not in user
         criteria = [
@@ -229,7 +229,11 @@ class MockProvider(Provider):
         ]
         if vague_first_pass:
             criteria[0] = "The system shall be fast when adding items."
-        module = f"feature_{task.group(1)}" if task else "feature"
+        module = (
+            "feature_" + re.sub(r"[^a-z0-9]", "_", task.group(1).lower())
+            if task
+            else "feature"
+        )
         return yaml.safe_dump(
             {
                 "title": f"Item store API{suffix}",
@@ -257,8 +261,8 @@ class MockProvider(Provider):
                             "new_content": match.group(2) + "\n# reviewed\n"}]},
                 sort_keys=False,
             )
-        task = re.search(r"feature_(\w+)`", user)
-        module = f"feature_{task.group(1)}" if task else "feature"
+        design = re.search(r"Single module `(feature[\w-]*)\.py`", user)
+        module = design.group(1) if design else "feature"
         return yaml.safe_dump(
             {
                 "files": [

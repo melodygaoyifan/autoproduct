@@ -54,10 +54,23 @@ def tool_finding(
 def run_all(diff: ParsedDiff, repo_dir: str) -> list[ToolReport]:
     from autoproduct.tools import external, probes
 
+    def _wireup_on_changed(diff_: ParsedDiff, repo_dir_: str) -> ToolReport:
+        """Repo-wide wireup scan, reported only for files this diff touched —
+        pre-existing drift is not this PR's finding."""
+        from autoproduct.tools.wireup import wireup_check
+
+        report = wireup_check(repo_dir_)
+        changed = set(diff_.changed_files)
+        report.findings = [f for f in report.findings if f.file_path in changed]
+        return report
+
+    _wireup_on_changed.__name__ = "wireup_check"
+
     runners = [
         probes.secret_scan,
         probes.csrf_ssrf_probe,
         probes.slopsquat_check,
+        _wireup_on_changed,
         external.semgrep,
         external.bandit,
         external.pip_audit,

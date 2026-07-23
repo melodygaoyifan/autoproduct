@@ -632,6 +632,37 @@ def preview(
     raise typer.Exit(code=1)
 
 
+@app.command()
+def add(
+    fdr: str = typer.Argument(..., help="Feature FDR file (one feature per FDR)"),
+    repo_dir: str = typer.Option(".", help="Existing workspace"),
+    yes: bool = typer.Option(False, "--yes", help="Confirm and build the feature"),
+    provider: str = typer.Option("anthropic", help="Provider (e.g. 'mock')"),
+):
+    """Add ONE feature to an existing product from a granular FDR. Keep each
+    FDR small: one feature or change per document."""
+    from autoproduct.upstream.autopilot import run_feature
+
+    result = run_feature(repo_dir, fdr, provider=provider, yes=yes)
+    if result.status == "needs_answers":
+        for i, q in enumerate(result.assessment.questions, 1):
+            console.print(f"  {i}. {q}")
+        raise typer.Exit(code=2)
+    if result.status == "awaiting_confirmation":
+        console.print(result.confirmation)
+        console.print("re-run with --yes to build this feature")
+        raise typer.Exit(code=0)
+    color = "green" if result.status == "completed" else "red"
+    console.print(f"\n[bold {color}]{result.status}[/bold {color}]")
+    for o in result.outcomes:
+        verdict = f" · review: {o.review_verdict}" if o.review_verdict else ""
+        console.print(f"  {o.task_id} {o.title}: {o.status}{verdict}")
+    if result.report_path:
+        console.print(f"report: {result.report_path}")
+    if result.status != "completed":
+        raise typer.Exit(code=1)
+
+
 def main() -> None:
     sys.exit(app())
 

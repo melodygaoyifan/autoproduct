@@ -68,13 +68,20 @@ A good FDR describes what USERS DO, never how the system works inside.
 - "用数据库存储订单" → 这是实现细节，不用你操心
 - "要有会员系统" → 太大了：拆开写用户具体做什么
 
-三条规则 / Three rules:
+四条规则 / Four rules:
 1. 每个功能都从"谁 + 做什么 + 看到什么"的角度写。
    Every feature = who + does what + sees what.
 2. "暂时不要"和"必须有"一样重要 — 它防止系统做多。
    The NOT-needed list matters as much as the must-have list.
 3. 写不清楚没关系 — 系统会把问题列出来问你，而不是自己猜。
    If something is unclear, the system will ASK you — it never guesses.
+4. **一份 FDR 只写一件事。** 第一份 FDR 写"最小能用的产品"；之后每个新功能、
+   每个改动，都单独写一份小 FDR，用 `autoproduct add` 加进去。FDR 越小，
+   构建越准，出错越好查。
+   **One FDR = one thing.** The first FDR is the smallest usable product;
+   every later feature or change is its OWN small FDR added with
+   `autoproduct add`. Granular FDRs build more accurately and fail more
+   debuggably.
 """
 
 
