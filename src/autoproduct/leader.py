@@ -16,10 +16,9 @@ Two halves:
 
 from __future__ import annotations
 
-import yaml
-
 from autoproduct import scoring
 from autoproduct.providers import get_provider
+from autoproduct.yamlx import extract_mapping
 from autoproduct.state import (
     Confidence,
     LeaderResult,
@@ -139,7 +138,7 @@ def semantic_merge(
             user=f"<findings>\n{listing}\n</findings>",
             max_tokens=2048,
         )
-        data = yaml.safe_load(raw.strip().strip("`"))
+        data = extract_mapping(raw, ("clusters",))
         clusters = data["clusters"]
         indices = sorted(i for cluster in clusters for i in cluster)
         if indices != list(range(1, len(result.findings) + 1)):

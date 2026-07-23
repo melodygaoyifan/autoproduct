@@ -20,6 +20,7 @@ from autoproduct.harness.spec_validator import LoadedSkill
 from autoproduct.providers import ProviderError, get_provider
 from autoproduct.state import VoterFinding, VoterOutput, VoterStatus
 from autoproduct.tools.voter_tools import TOOL_PROTOCOL_DOC, ToolBox, ToolBudgetExceeded
+from autoproduct.yamlx import extract_mapping
 
 _SYSTEM_TEMPLATE = """You are the {name} voter in a multi-agent code review system.
 
@@ -158,25 +159,17 @@ class Voter:
 
     @staticmethod
     def _tool_request(raw: str) -> dict | None:
-        text = raw.strip().strip("`")
-        if "tool_request" not in text.split("\n", 1)[0] and "tool_request:" not in text:
+        if "tool_request" not in raw:
             return None
         try:
-            data = yaml.safe_load(text)
-        except yaml.YAMLError:
+            data = extract_mapping(raw, ("tool_request",))
+        except ValueError:
             return None
-        if isinstance(data, dict) and isinstance(data.get("tool_request"), dict):
-            return data["tool_request"]
-        return None
+        request = data.get("tool_request")
+        return request if isinstance(request, dict) else None
 
     def _parse(self, raw: str) -> VoterOutput:
-        text = raw.strip()
-        if text.startswith("```"):
-            text = text.strip("`")
-            text = text.split("\n", 1)[1] if "\n" in text else text
-        data = yaml.safe_load(text)
-        if not isinstance(data, dict):
-            raise ValueError("voter response is not a YAML mapping")
+        data = extract_mapping(raw, ("status", "findings"))
         findings = []
         for item in data.get("findings") or []:
             item.setdefault("voter", self.spec.name)
