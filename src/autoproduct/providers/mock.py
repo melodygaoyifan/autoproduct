@@ -45,6 +45,7 @@ class MockProvider(Provider):
         )
 
     def complete(self, *, model: str, system: str, user: str, max_tokens: int = 4096) -> str:
+        from autoproduct.compound import COMPOUND_MARKER
         from autoproduct.leader import LEADER_MARKER
         from autoproduct.verify import VERIFIER_MARKER
 
@@ -52,6 +53,8 @@ class MockProvider(Provider):
             return self._verify(user)
         if LEADER_MARKER in system:
             return self._lead(user)
+        if COMPOUND_MARKER in system:
+            return self._compound(user)
         files = _FILE_HEADER.findall(user)
         file_path = files[0] if files else "unknown"
         findings = []
@@ -94,6 +97,18 @@ class MockProvider(Provider):
         return yaml.safe_dump(
             {"clusters": clusters, "summary": "mock leader summary"}
         )
+
+    def _compound(self, user: str) -> str:
+        data = yaml.safe_load(user) or {}
+        recurring = data.get("recurring_findings") or []
+        proposals = [
+            {
+                "constraint": f"Do not reintroduce: {item['title']}",
+                "rationale": f"seen {item['count']}x in the window",
+            }
+            for item in recurring[:2]
+        ]
+        return yaml.safe_dump({"proposals": proposals}, sort_keys=False)
 
     def _verify(self, user: str) -> str:
         """Refute-by-quote: VERIFIED iff the claimed evidence text actually
