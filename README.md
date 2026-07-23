@@ -1,103 +1,96 @@
-# autoproduct (implementation)
+# autoproduct
 
-Implementation of the design documented in the parent directory
-(`../08-foundation.md` through `../17-domain-profiles.md`). Currently at the
-**walking-skeleton milestone** (doc 10, Weeks 1–2 condensed): one voter
-end-to-end through the full state machine.
+**Write one document. Get a working product.**
 
-## What works today
+autoproduct builds apps, web services, and 微信小程序 from a single
+requirements document (the **FDR**) written by someone with **no coding or
+product experience** — in their own words, in their own language. The
+system coaches you until the FDR is buildable, confirms the plan back in
+plain language, then designs, implements, tests, and reviews the product
+through a multi-agent pipeline with every automated decision on the record.
 
+## For founders (no technical background needed)
+
+```bash
+autoproduct create myshop --profile miniprogram    # 1. writes FDR.md template + guide
+# ← fill in FDR.md in your own words (Chinese or English)
+autoproduct create myshop --profile miniprogram    # 2. asks questions OR confirms the plan
+autoproduct create myshop --profile miniprogram --yes   # 3. builds everything
 ```
-autoproduct review <target> [--provider mock] [--mode fast|standard|deep]
-```
 
-`<target>` is a GitHub PR URL (needs `gh` auth) or a local git range
-(`main...HEAD`, `HEAD`, …).
+- **If your FDR is unclear, the system asks — it never guesses.** You get
+  at most 5 specific questions a non-technical person can answer
+  (`FDR-QUESTIONS.md`).
+- **Before building, you confirm intent in plain language** — 会做什么 /
+  这次不做 / 怎么算成功 (`product/CONFIRMATION.md`).
+- **After building, you get `product/BUILD-REPORT.md`** in your language:
+  what exists, what the automated reviewers flagged, what to do next.
+- Profiles carry domain rules automatically: the 小程序 profile enforces
+  the 2MB package budget, request-domain whitelisting, lazy permission
+  requests with privacy declarations, and WeChat review-guideline
+  boundaries; `web` enforces CSRF/SSRF discipline, a11y, and E2E flows;
+  `app` enforces store-review and offline-behavior rules.
 
-Pipeline: **Gate 1 DoR → init → analyze (mode router) → tools → vote
-(parallel ×6) → verify → leader → post**
+## What happens under the hood
 
-- Deterministic mode router (§08.3.5.1) — conservative, escalates on
-  auth/billing paths, new dependencies, safety-removal signatures. Fast mode
-  runs the single cheap (Haiku) reviewer only.
-- Spec-driven voter loading (doc 11): skills are markdown + YAML frontmatter,
-  validated by `SpecValidator`; invalid specs refuse to load; voter tool risk
-  ceiling ≤ L2 enforced at the schema level.
-- Full six-voter roster (Correctness, Security, Performance, Context,
-  Repo Graph, Style), each mapped to its DAPLab taxonomy slice, with
-  `<untrusted_*>` prompt hygiene and BLOCKED_* statuses instead of silent
-  empties.
-- Voter investigation tools (§09.7.1): read-only, repo-scoped, size-capped
-  `read_file` / `grep` / `list_files`, allowlisted per voter spec with a
-  per-invocation call budget enforced at the ToolBox boundary. Works across
-  all provider families via a text tool protocol. Live demo: a signature
-  change whose only caller sits outside the diff — repo_graph greps the
-  repo and flags the breakage with the caller's line quoted (DAPLab P8, the
-  category diff-only review structurally misses). Heterogeneous providers (Anthropic, OpenAI, Google, xAI); when a
-  provider's key is absent, the spec's declared fallback runs and the
-  substitution is recorded in the output envelope — never silent.
-- Deterministic tools node (§09.7.3): three always-on pure-Python probes —
-  secret_scan, csrf_ssrf_probe (the two 100%-failure-rate AI-code
-  categories), slopsquat_check (live PyPI presence/age + Damerau typosquat
-  distance against popular packages) — plus availability-gated Semgrep,
-  Bandit, pip-audit, and TruffleHog wrappers (absent binaries report
-  `skipped`, never silently missing). Tool findings enter pre-verified,
-  feed voter context, and corroborate voter findings in scoring.
-- Fresh-agent verification (§09.4.6): every finding re-examined by an
-  isolated verifier prompted to refute it; NOT_REPRODUCIBLE findings score 0.
-- Composite confidence scoring (§09.4.7): self-confidence (40) +
-  verification (40) + cross-voter corroboration (20), threshold-gated
-  reporting (80 default / 60 for critical+high).
-- Two-half Leader: deterministic score filter / exact dedupe / verdict
-  selection (§09.4.4.7, escalation triggers exercised live), then LLM
-  semantic merge — paraphrased same-defect findings from different voters
-  cluster into one, corroborators credited, narrative summary written. The
-  LLM half degrades to the deterministic result on any failure; it can
-  improve the report but never gate the pipeline.
-- Gate 3 HITL (§09.8): ESCALATE_* verdicts open a GitHub Issue on the
-  reviewed repo (template-rendered, with resume instructions), then pause
-  the graph via `interrupt()` on a SQLite checkpoint. `autoproduct resume
-  <review-id> --decision ack|override:<VERDICT>` continues in a separate
-  process; overrides are stamped into the summary and audit trail.
-- PR comment (`review.md`) rendered for every completed review — verdict,
-  findings table with scores, collapsible suggested fixes, blocked voters,
-  and provider substitutions all visible — and posted via `gh` when the
-  target is a PR URL.
-- YAML mirror audit trail per node under `.mas/reviews/<id>/`.
-- Hermetic test suite (mock provider, no network): `uv run pytest`.
+Eight-stage multi-agent pipeline (design docs in the parent directory):
 
-Also shipped since the skeleton: Gate 2 Test Gate (suite runs in an
-isolated worktree; failures/errors block APPROVE), Gate 3 HITL
-(interrupt/resume on a SQLite checkpoint + GitHub Issue), per-voter logs,
-the Stage-1 compounding loop (`autoproduct compound [--pr]`), the replay
-CLI, and the labeled benchmark (`autoproduct bench`, bars: recall ≥40%,
-precision ≥50%).
+**Upstream (build):** Discovery (evidence-tagged hypotheses — fabricating
+user evidence is a schema violation) → Planning (task DAG, cycle-checked) →
+Spec (EARS acceptance criteria, machine-linted, every criterion covered by
+a test skeleton) → Coding (single-writer, test-first, sandboxed suite must
+pass before any commit).
 
-Deep mode adds: the T3 sandbox (suite runs in a network-disconnected
-docker container — deps sync first, then the network is cut) and mutation
-testing (mutmut mutates only the changed files; score <60% blocks
-APPROVE-class verdicts, with "no tests" mutants counted as survivors).
-The benchmark set includes three cases distilled from real bugs
-autoproduct's own self-reviews caught.
+**Downstream (judge):** Code Review (6 heterogeneous voters with
+investigation tools, deterministic security probes, every finding
+independently verified) → Test Gate (isolated worktree, mutation testing in
+deep mode) → Deploy Review → Maintenance (incident triage → root cause →
+fix-PRs with regression tests that must fail pre-fix).
 
-## What's next (per doc 10)
+Two learning loops compound over time, both human-gated: review signals
+become CLAUDE.md constraints; recurring incidents become investigator
+skills.
 
-1. tree-sitter/pyright upgrades to the repo_graph toolset.
-2. v0.5.0 track: the Deployment Review MAS (§09.11).
+**Gate philosophy:** humans keep the judgments they're best at (is this my
+intent? — asked in their language); machines keep the ones non-technical
+users can't make (EARS validity, DAG soundness, tests) — and every
+auto-approval is recorded in the build report, never silent. Nothing
+auto-merges to main; nothing deploys to production autonomously; generated
+fix-PRs re-enter review like any human PR.
 
-## Layout
+## For developers
 
-```
-skills/            voter skills (markdown + machine-checked frontmatter)
-src/autoproduct/
-  state.py         VoterFinding / VoterOutput / ReviewState / verdicts
-  diff.py          unified-diff parsing + acquisition (git / gh)
-  harness/         SpecValidator (ADR-008/009)
-  voters/          uniform Voter class — voters differ only by skill file
-  providers/       anthropic (real), mock (deterministic, for tests)
-  leader.py        deterministic synthesis + verdict selection
-  orchestrator/    LangGraph state machine + mode router
-  mirror.py        YAML audit trail
-  cli.py           `autoproduct review`
-tests/             includes hermetic end-to-end run on a planted-bug diff
-```
+Every stage is also a standalone command:
+
+| | |
+|---|---|
+| `autoproduct discover / plan / spec / build` | run upstream stages individually (gates U1–U4) |
+| `autoproduct review <PR-URL \| git-range>` | multi-voter code review + test gate |
+| `autoproduct deploy-review` · `triage [--fix]` | Gate 5 / Gate 6 stages |
+| `autoproduct serve` | webhook mode: GitHub PRs review themselves; incidents POST in |
+| `autoproduct bench` · `compound --pr` · `replay` | benchmark, compounding loop, audit trail |
+
+Measured baseline: **recall 100%, precision 67%** on the labeled benchmark
+(bars: 40%/50%); ~150 hermetic tests (`uv run pytest`). Operations guide in
+[RUNBOOK.md](RUNBOOK.md).
+
+Setup: `uv sync`, an `ANTHROPIC_API_KEY` (other provider keys optional —
+voter specs declare per-family models with visible fallback), `gh` auth for
+GitHub actions, Docker optional (enables the network-isolated test
+sandbox).
+
+## Honest limits (today)
+
+- **No graphical UI yet** — the founder flow is CLI + generated markdown
+  documents; the server exposes JSON endpoints a UI could sit on.
+- **No external MCP / service provisioning yet** — generated products can
+  call APIs in their code, but autoproduct does not yet provision
+  databases, cloud services, or credentials, and the MCP tool transport
+  from design doc 11 is not yet exposed externally.
+- 小程序/JS builds pass on review alone (no JS test runner yet); Python
+  builds get the full test gate.
+- One machine, one workspace at a time; multi-instance supervision is a
+  documented upgrade path.
+
+MIT · design docs: `../08-*.md` through `../17-*.md` · every PR in this
+repo was reviewed by autoproduct itself.
