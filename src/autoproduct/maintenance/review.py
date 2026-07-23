@@ -45,7 +45,10 @@ class Incident(BaseModel):
             data = json.loads(raw) if str(path).endswith(".json") else yaml.safe_load(raw)
             data.setdefault("id", uuid.uuid4().hex[:12])
             return cls.model_validate(data)
-        return cls(id=uuid.uuid4().hex[:12], title=raw.splitlines()[0][:120], body=raw)
+        lines = raw.splitlines()
+        if not lines or not raw.strip():
+            raise ValueError(f"incident file {path} is empty")
+        return cls(id=uuid.uuid4().hex[:12], title=lines[0][:120], body=raw)
 
     @property
     def text(self) -> str:

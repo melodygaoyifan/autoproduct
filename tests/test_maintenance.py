@@ -74,6 +74,15 @@ def test_low_priority_skips_root_cause(tmp_path):
     assert result.root_cause is None
 
 
+def test_empty_incident_file_rejected_cleanly(tmp_path):
+    import pytest
+
+    path = tmp_path / "empty.txt"
+    path.write_text("")
+    with pytest.raises(ValueError, match="is empty"):
+        Incident.load(path)
+
+
 def test_incident_loads_from_text_file(tmp_path):
     path = tmp_path / "incident.txt"
     path.write_text(INCIDENT_TEXT)
