@@ -36,6 +36,7 @@ learned section below.
 
 ## Known accepted risks
 
-- Gate 2 executes the reviewed repo's test suite in a subprocess worktree
-  without container sandboxing (T3 sandbox scheduled per doc 10 Day 22.5).
-  Only review trusted repos until then.
+- Gate 2's T3 container sandbox (network-disconnected docker) runs in deep
+  mode when a docker daemon is available. Standard mode and docker-less
+  hosts fall back to an unsandboxed subprocess worktree — visible in the
+  report's `sandbox` field. Only review trusted repos on the fallback path.

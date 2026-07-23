@@ -1,0 +1,45 @@
+description: 'Real bug from PR #3 self-review: infra ''error'' status silently lets
+  APPROVE survive'
+diff: 'diff --git a/gate.py b/gate.py
+
+  --- a/gate.py
+
+  +++ b/gate.py
+
+  @@ -1,0 +1,12 @@
+
+  +class TestReport(BaseModel):
+
+  +    status: Literal["passed", "failed", "no_tests", "skipped", "error"]
+
+  +    summary: str
+
+  +
+
+  +    @property
+
+  +    def gate_blocks(self) -> bool:
+
+  +        return self.status == "failed"
+
+  +
+
+  +def apply_gate(report, verdict):
+
+  +    if report.gate_blocks and verdict == "APPROVE":
+
+  +        return "REQUEST_CHANGES"
+
+  +    return verdict
+
+  '
+expected:
+- file_path: gate.py
+  keywords:
+  - error
+  - skipped
+  - silently
+  - unrunnable
+  - only
+  - approve
+name: 11-real-error-status-bypasses-gate

@@ -66,11 +66,17 @@ def render_pr_comment(
 
     if test_report:
         icon = _TEST_ICON.get(test_report.get("status", ""), "")
-        lines += [
+        gate_line = (
             f"**Test gate (Gate 2):** {icon} {test_report.get('status')} — "
-            f"{test_report.get('summary')}",
-            "",
-        ]
+            f"{test_report.get('summary')} "
+            f"<sub>sandbox: {test_report.get('sandbox', 'subprocess')}</sub>"
+        )
+        mutation = test_report.get("mutation")
+        if mutation:
+            gate_line += f"\n**Mutation:** {mutation.get('summary') or mutation.get('status')}"
+            if mutation.get("survivors"):
+                gate_line += f" — survivors: {', '.join(mutation['survivors'][:5])}"
+        lines += [gate_line, ""]
 
     if result.blocked_voters:
         lines.append(

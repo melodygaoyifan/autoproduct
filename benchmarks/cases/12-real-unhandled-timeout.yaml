@@ -1,0 +1,38 @@
+description: 'Real bug from PR #3 self-review: TimeoutExpired propagates out of the
+  node'
+diff: 'diff --git a/runner.py b/runner.py
+
+  --- a/runner.py
+
+  +++ b/runner.py
+
+  @@ -1,0 +1,8 @@
+
+  +def apply_patch(worktree, patch_path):
+
+  +    applied = subprocess.run(
+
+  +        ["git", "apply", "--3way", patch_path],
+
+  +        capture_output=True, text=True, cwd=worktree, timeout=300,
+
+  +    )
+
+  +    if applied.returncode != 0:
+
+  +        return Report(status="error", detail=applied.stderr[:400])
+
+  +    return Report(status="ok")
+
+  '
+expected:
+- file_path: runner.py
+  keywords:
+  - timeoutexpired
+  - timeout expires
+  - uncaught
+  - unhandled
+  - propagat
+  - not caught
+  - crash
+name: 12-real-unhandled-timeout
