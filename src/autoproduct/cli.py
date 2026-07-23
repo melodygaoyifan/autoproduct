@@ -216,5 +216,44 @@ def compound(
     console.print(output.splitlines()[-1] if output else "(no gh output)")
 
 
+_DEFAULT_CASES = Path(__file__).resolve().parent.parent.parent / "benchmarks" / "cases"
+
+
+@app.command()
+def bench(
+    cases_dir: str = typer.Option(str(_DEFAULT_CASES), help="Labeled benchmark cases"),
+    skills_dir: str = typer.Option(str(_DEFAULT_SKILLS), help="Voter skills directory"),
+    provider: str = typer.Option(None, help="Force one provider (e.g. 'mock')"),
+    limit: int = typer.Option(None, help="Run only the first N cases"),
+    repo_dir: str = typer.Option(".", help="Where to record the result"),
+):
+    """Run the labeled benchmark; v0.1.0 bars: recall >=40%, precision >=50%."""
+    from autoproduct.bench import run_benchmark, save_result
+
+    result = run_benchmark(
+        cases_dir, skills_dir=skills_dir, provider_override=provider, limit=limit
+    )
+    table = Table(title="benchmark")
+    for col in ("case", "verdict", "recall", "findings (matched)", "s"):
+        table.add_column(col)
+    for c in result.cases:
+        table.add_row(
+            c.name,
+            c.verdict,
+            f"{c.expected_matched}/{c.expected_total}",
+            f"{c.findings_total} ({c.findings_matched})",
+            str(c.duration_s),
+        )
+    console.print(table)
+    verdict = "PASS" if result.passes() else "FAIL"
+    console.print(
+        f"recall [bold]{result.recall:.0%}[/bold] (bar 40%) · "
+        f"precision [bold]{result.precision:.0%}[/bold] (bar 50%) → [bold]{verdict}[/bold]"
+    )
+    console.print(f"saved: {save_result(result, repo_dir)}")
+    if not result.passes():
+        raise typer.Exit(code=1)
+
+
 def main() -> None:
     sys.exit(app())

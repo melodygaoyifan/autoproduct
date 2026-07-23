@@ -1,0 +1,19 @@
+description: reqeusts instead of requests
+diff: 'diff --git a/requirements.txt b/requirements.txt
+
+  --- a/requirements.txt
+
+  +++ b/requirements.txt
+
+  @@ -1,0 +1,1 @@
+
+  +reqeusts==2.31
+
+  '
+expected:
+- file_path: requirements.txt
+  keywords:
+  - typosquat
+  - reqeusts
+  - does not exist
+name: 06-typosquat-dependency

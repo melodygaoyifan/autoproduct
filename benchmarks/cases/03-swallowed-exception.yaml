@@ -1,0 +1,26 @@
+description: 'broad except: pass hides failures'
+diff: 'diff --git a/app/jobs.py b/app/jobs.py
+
+  --- a/app/jobs.py
+
+  +++ b/app/jobs.py
+
+  @@ -1,0 +1,4 @@
+
+  +def sync():
+
+  +    try:
+
+  +        push_updates()
+
+  +    except Exception: pass
+
+  '
+expected:
+- file_path: app/jobs.py
+  keywords:
+  - swallow
+  - except
+  - silent
+  - hide
+name: 03-swallowed-exception

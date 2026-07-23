@@ -66,11 +66,19 @@ Pipeline: **Gate 1 DoR → init → analyze (mode router) → tools → vote
 - YAML mirror audit trail per node under `.mas/reviews/<id>/`.
 - Hermetic test suite (mock provider, no network): `uv run pytest`.
 
+Also shipped since the skeleton: Gate 2 Test Gate (suite runs in an
+isolated worktree; failures/errors block APPROVE), Gate 3 HITL
+(interrupt/resume on a SQLite checkpoint + GitHub Issue), per-voter logs,
+the Stage-1 compounding loop (`autoproduct compound [--pr]`), the replay
+CLI, and the labeled benchmark (`autoproduct bench`, bars: recall ≥40%,
+precision ≥50%).
+
 ## What's next (per doc 10)
 
-1. Dogfood on a real PR (the bootstrap protocol's first self-review).
-2. Mutation testing in isolated worktrees; per-voter logs; the compounding
-   loop; tree-sitter/pyright upgrades to the repo_graph toolset.
+1. Mutation testing (mutmut, deep mode) and the T3 container sandbox for
+   Gate 2.
+2. tree-sitter/pyright upgrades to the repo_graph toolset.
+3. Real-PR benchmark instances to supplement the seeded synthetic set.
 
 ## Layout
 

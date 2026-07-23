@@ -1,0 +1,24 @@
+description: 'clean: extract magic number to constant'
+diff: 'diff --git a/app/retry.py b/app/retry.py
+
+  --- a/app/retry.py
+
+  +++ b/app/retry.py
+
+  @@ -1,2 +1,4 @@
+
+  -def should_retry(attempt):
+
+  -    return attempt < 3
+
+  +MAX_RETRIES = 3
+
+  +
+
+  +def should_retry(attempt):
+
+  +    return attempt < MAX_RETRIES
+
+  '
+expected: []
+name: 10-clean-constant

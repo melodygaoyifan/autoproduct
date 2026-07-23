@@ -1,0 +1,23 @@
+description: state-changing endpoint without CSRF
+diff: 'diff --git a/app/views.py b/app/views.py
+
+  --- a/app/views.py
+
+  +++ b/app/views.py
+
+  @@ -1,0 +1,4 @@
+
+  +@app.post("/orders/cancel")
+
+  +def cancel(request):
+
+  +    orders.cancel(request.form[''id''])
+
+  +    return ''ok''
+
+  '
+expected:
+- file_path: app/views.py
+  keywords:
+  - csrf
+name: 07-csrf-missing
