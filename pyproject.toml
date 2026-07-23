@@ -1,6 +1,6 @@
 [project]
 name = "autoproduct"
-version = "0.0.1"
+version = "0.8.0"
 description = "Multi-agent review-side SDLC system (implementation of design docs 08-17)"
 readme = "README.md"
 authors = [
