@@ -203,7 +203,8 @@ def test_gate_node(state: ReviewState, *, repo_dir: str) -> dict[str, Any]:
         leader = dict(state["leader"])
         leader["verdict"] = Verdict.REQUEST_CHANGES.value
         leader["summary"] = (
-            f"[Gate 2: test suite failed — {report.summary}] " + leader["summary"]
+            f"[Gate 2 blocked ({report.status}): {report.summary}] "
+            + leader["summary"]
         )
         update["leader"] = leader
     return update

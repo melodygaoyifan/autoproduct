@@ -30,7 +30,10 @@ class TestReport(BaseModel):
 
     @property
     def gate_blocks(self) -> bool:
-        return self.status == "failed"
+        # 'error' blocks too: an APPROVE issued without a runnable suite
+        # would violate charter rule 9 (test before done). Found by the
+        # self-review of PR #3.
+        return self.status in ("failed", "error")
 
 
 def _run(cmd: list[str], cwd: str | Path, timeout: int = _TEST_TIMEOUT_S):
@@ -52,50 +55,51 @@ def run_test_gate(repo_dir: str, diff_raw: str) -> TestReport:
 
     worktree = Path(tempfile.mkdtemp(prefix="autoproduct-testgate-"))
     try:
-        added = _run(
-            ["git", "worktree", "add", "--detach", str(worktree), "HEAD"], repo
+        return _run_gate_in_worktree(repo, worktree, diff_raw)
+    except subprocess.TimeoutExpired as exc:
+        return TestReport(
+            status="error", summary=f"timed out: {str(exc)[:200]}"
         )
-        if added.returncode != 0:
-            return TestReport(
-                status="error",
-                summary="could not create isolated worktree",
-                detail=added.stderr[:400],
-            )
-        if diff_raw.strip():
-            patch = worktree / ".autoproduct.patch"
-            patch.write_text(diff_raw, encoding="utf-8")
-            applied = _run(["git", "apply", "--3way", patch.name], worktree)
-            patch.unlink(missing_ok=True)
-            if applied.returncode != 0:
-                return TestReport(
-                    status="error",
-                    summary="reviewed diff did not apply cleanly to HEAD",
-                    detail=applied.stderr[:400],
-                )
-        if not _has_tests(worktree):
-            return TestReport(
-                status="no_tests", summary="no test files found in the project"
-            )
-
-        if (worktree / "uv.lock").exists() and shutil.which("uv"):
-            cmd = ["uv", "run", "--project", str(worktree), "pytest", "-q"]
-        else:
-            cmd = [sys.executable, "-m", "pytest", "-q"]
-        try:
-            proc = _run(cmd, worktree)
-        except subprocess.TimeoutExpired:
-            return TestReport(
-                status="error", summary=f"test run exceeded {_TEST_TIMEOUT_S}s"
-            )
-        tail = "\n".join((proc.stdout or proc.stderr).strip().splitlines()[-15:])
-        if proc.returncode == 0:
-            return TestReport(status="passed", summary=_last_line(tail), detail=tail)
-        if proc.returncode == 5:  # pytest: no tests collected
-            return TestReport(status="no_tests", summary="pytest collected no tests")
-        return TestReport(status="failed", summary=_last_line(tail), detail=tail)
     finally:
         _run(["git", "worktree", "remove", "--force", str(worktree)], repo)
         shutil.rmtree(worktree, ignore_errors=True)
+
+
+def _run_gate_in_worktree(repo: Path, worktree: Path, diff_raw: str) -> TestReport:
+    added = _run(["git", "worktree", "add", "--detach", str(worktree), "HEAD"], repo)
+    if added.returncode != 0:
+        return TestReport(
+            status="error",
+            summary="could not create isolated worktree",
+            detail=added.stderr[:400],
+        )
+    if diff_raw.strip():
+        patch = worktree / ".autoproduct.patch"
+        patch.write_text(diff_raw, encoding="utf-8")
+        applied = _run(["git", "apply", "--3way", patch.name], worktree)
+        patch.unlink(missing_ok=True)
+        if applied.returncode != 0:
+            return TestReport(
+                status="error",
+                summary="reviewed diff did not apply cleanly to HEAD",
+                detail=applied.stderr[:400],
+            )
+    if not _has_tests(worktree):
+        return TestReport(
+            status="no_tests", summary="no test files found in the project"
+        )
+
+    if (worktree / "uv.lock").exists() and shutil.which("uv"):
+        cmd = ["uv", "run", "--project", str(worktree), "pytest", "-q"]
+    else:
+        cmd = [sys.executable, "-m", "pytest", "-q"]
+    proc = _run(cmd, worktree)
+    tail = "\n".join((proc.stdout or proc.stderr).strip().splitlines()[-15:])
+    if proc.returncode == 0:
+        return TestReport(status="passed", summary=_last_line(tail), detail=tail)
+    if proc.returncode == 5:  # pytest: no tests collected
+        return TestReport(status="no_tests", summary="pytest collected no tests")
+    return TestReport(status="failed", summary=_last_line(tail), detail=tail)
 
 
 def _last_line(text: str) -> str:

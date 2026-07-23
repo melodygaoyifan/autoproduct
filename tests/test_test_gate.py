@@ -62,6 +62,23 @@ def test_gate_skipped_outside_git(tmp_path):
     assert run_test_gate(str(tmp_path), "").status == "skipped"
 
 
+def test_gate_error_blocks_approve(tmp_path):
+    """Found by self-review of PR #3: an unrunnable suite must not let
+    APPROVE survive (charter rule 9)."""
+    repo = _git_repo(tmp_path, PASSING)
+    non_applying = """\
+diff --git a/nonexistent.py b/nonexistent.py
+--- a/nonexistent.py
++++ b/nonexistent.py
+@@ -1,1 +1,1 @@
+-old line that is not there
++new line
+"""
+    report = run_test_gate(str(repo), non_applying)
+    assert report.status == "error"
+    assert report.gate_blocks
+
+
 def test_e2e_gate2_downgrades_approve(tmp_path, skills_dir):
     """Mock voters find nothing in a benign diff -> APPROVE, but the failing
     suite must force REQUEST_CHANGES."""
