@@ -31,10 +31,22 @@ _SECRET_PATTERNS = [
 ]
 
 
+# Documentation placeholders (e.g. AWS's official example key). Real
+# credentials never carry these values; flagging them buries real findings
+# in fixture noise (found by the self-review of PR #6).
+_KNOWN_EXAMPLE_CREDENTIALS = {
+    "AKIAIOSFODNN7EXAMPLE",
+    "AKIAI44QH8DHBEXAMPLE",
+    "wJalrXUtnFXKEXAMPLEKEY",
+}
+
+
 def secret_scan(diff: ParsedDiff, repo_dir: str) -> ToolReport:
     findings = []
     for file in diff.files:
         for lineno, text in file.added:
+            if any(example in text for example in _KNOWN_EXAMPLE_CREDENTIALS):
+                continue
             for pattern, label in _SECRET_PATTERNS:
                 if pattern.search(text):
                     findings.append(
@@ -66,9 +78,16 @@ _OUTBOUND_NON_LITERAL = re.compile(
 )
 
 
+_CODE_SUFFIXES = (".py", ".js", ".ts", ".jsx", ".tsx")
+
+
 def csrf_ssrf_probe(diff: ParsedDiff, repo_dir: str) -> ToolReport:
     findings = []
     for file in diff.files:
+        if not file.path.endswith(_CODE_SUFFIXES):
+            # Data/fixture files (.yaml, .md, .json) quote code without
+            # executing it (found by the self-review of PR #6).
+            continue
         added_text = "\n".join(text for _, text in file.added)
         file_has_csrf = bool(_CSRF_HINT.search(added_text))
         for lineno, text in file.added:
