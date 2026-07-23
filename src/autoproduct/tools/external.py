@@ -91,8 +91,12 @@ def bandit(diff: ParsedDiff, repo_dir: str) -> ToolReport:
         line = result["line_number"]
         if line not in added.get(path, set()):
             continue
-        if result["test_id"] == "B101" and _is_test_file(path):
-            continue  # assert is the pytest idiom, not a finding
+        # Test files: skip low-severity findings for test idioms (assert,
+        # subprocess helpers in fixtures) — B101 noise flagged on PR #3,
+        # B404/B603/B607 on PRs #5/#10; the compounding loop surfaced the
+        # pattern. High-severity findings in tests still report.
+        if _is_test_file(path) and result["issue_severity"] in ("LOW", "MEDIUM"):
+            continue
         findings.append(
             tool_finding(
                 "bandit",
