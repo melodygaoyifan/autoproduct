@@ -63,7 +63,9 @@ def test_report_state_renders_report(studio):
     (root / "product").mkdir(exist_ok=True)
     (root / "product" / "BUILD-REPORT.md").write_text("# 已完成\n你的接龙工具好了。")
     page = client.get("/").text
-    assert "已完成" in page and "重新开始" in page
+    assert "已完成" in page          # the report renders
+    assert "添加新功能" in page      # feature-granular add form
+    assert "一次只写一个功能" in page  # granularity guidance in the UI
 
 
 def test_status_endpoint(studio):

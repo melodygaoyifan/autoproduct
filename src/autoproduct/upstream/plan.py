@@ -35,6 +35,10 @@ class Task(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     lane: str = "core"
     estimate_hours: float = Field(gt=0, le=40)
+    files_expected: list[str] = Field(
+        default_factory=list,
+        description="globs the task expects to touch — lane_check input",
+    )
 
 
 class Plan(BaseModel):
@@ -44,6 +48,91 @@ class Plan(BaseModel):
     dag_issues: list[str] = Field(default_factory=list)
     critic_issues: list[dict] = Field(default_factory=list)
     revisions: int = 0
+
+
+def lane_check(tasks: list[Task]) -> list[str]:
+    """§13: single-writer enforced AT PLAN TIME — two tasks in DIFFERENT
+    lanes declaring the same expected file is a collision waiting to
+    happen. Same-lane overlap is fine (lanes serialize)."""
+    from fnmatch import fnmatch
+
+    issues = []
+    for i, a in enumerate(tasks):
+        for b in tasks[i + 1 :]:
+            if a.lane == b.lane:
+                continue
+            for ga in a.files_expected:
+                for gb in b.files_expected:
+                    if ga == gb or fnmatch(ga, gb) or fnmatch(gb, ga):
+                        issues.append(
+                            f"lane collision: {a.id} ({a.lane}) and {b.id} "
+                            f"({b.lane}) both expect {ga!r}"
+                        )
+    return issues
+
+
+def budget_check(tasks: list[Task], budget_hours: float) -> list[str]:
+    total = sum(t.estimate_hours for t in tasks)
+    if total > budget_hours:
+        return [
+            f"plan estimates {total:.0f}h, over the {budget_hours:.0f}h budget "
+            "— cut scope or split the feature"
+        ]
+    return []
+
+
+def record_actual(repo_dir: str | Path, lane: str, estimate_hours: float, actual_seconds: float) -> None:
+    """estimate_calibrator's raw material: what builds actually cost."""
+    path = Path(repo_dir) / ".mas" / "estimates.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    history = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else []
+    history = (history or [])[-200:]
+    history.append(
+        {"lane": lane, "estimate_hours": estimate_hours,
+         "actual_seconds": round(actual_seconds, 1)}
+    )
+    path.write_text(yaml.safe_dump(history, sort_keys=False), encoding="utf-8")
+
+
+def calibration_note(repo_dir: str | Path, tasks: list[Task]) -> str:
+    """Advisory (n>=5 per doc 13): compare plan estimates against the
+    recorded reality for the same lanes."""
+    path = Path(repo_dir) / ".mas" / "estimates.yaml"
+    if not path.exists():
+        return ""
+    history = yaml.safe_load(path.read_text(encoding="utf-8")) or []
+    if len(history) < 5:
+        return ""
+    import statistics
+
+    median_s = statistics.median(e["actual_seconds"] for e in history)
+    return (
+        f"calibration: {len(history)} recorded build(s), median actual "
+        f"{median_s:.0f}s per task — treat hour-estimates as relative sizing"
+    )
+
+
+def blast_radius(repo_dir: str | Path, text: str, cap: int = 20) -> list[str]:
+    """Files the change will plausibly touch — token overlap between the
+    FDR/brief text and existing file paths/symbols. Advisory planner
+    context (the full repo-graph version arrives with code_intel)."""
+    from autoproduct.maintenance.correlate import _tokens
+
+    tokens = _tokens(text)
+    root = Path(repo_dir)
+    hits = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix not in (".py", ".js", ".ts", ".wxml", ".json"):
+            continue
+        rel = path.relative_to(root)
+        if any(part in (".git", ".mas", "node_modules", "__pycache__", "specs") for part in rel.parts):
+            continue
+        stem_tokens = _tokens(str(rel).replace("/", " ").replace("_", " ").replace(".", " "))
+        if stem_tokens & tokens:
+            hits.append(str(rel))
+        if len(hits) >= cap:
+            break
+    return hits
 
 
 def dag_check(tasks: list[Task]) -> list[str]:
@@ -91,6 +180,7 @@ tasks:
     depends_on: []
     lane: api
     estimate_hours: 4
+    files_expected: ["app/orders*.py"]   # globs this task will touch
 """
 
 _CRITIC_SYSTEM = f"""You are the {PLAN_CRITIC_MARKER}: judge completeness
@@ -150,7 +240,12 @@ def run_planning(
             )
             tasks, dag_issues, critics = [], ["unparseable planner output"], []
             continue
-        dag_issues = dag_check(tasks)
+        budget = float(
+            yaml.safe_load(
+                (Path(repo_dir) / ".mas" / "project.yaml").read_text(encoding="utf-8")
+            ).get("budget_hours", 60)
+        )
+        dag_issues = dag_check(tasks) + lane_check(tasks) + budget_check(tasks, budget)
         raw_critique = provider_impl.complete(
             model=critic_model,
             system=_CRITIC_SYSTEM,
@@ -182,6 +277,9 @@ def run_planning(
         critic_issues=critics,
         revisions=revision,
     )
+    note = calibration_note(repo_dir, tasks)
+    if note:
+        plan.critic_issues.append({"severity": "minor", "lens": "estimates", "problem": note})
     _save(repo_dir, plan)
     return plan
 

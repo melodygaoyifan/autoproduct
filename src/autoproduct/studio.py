@@ -49,6 +49,16 @@ def _page(title: str, body: str) -> HTMLResponse:
     )
 
 
+def _pending_feature(root: Path) -> Path | None:
+    features_dir = root / "product" / "features"
+    if not features_dir.is_dir():
+        return None
+    for d in sorted(features_dir.iterdir(), reverse=True):
+        if (d / "CONFIRMATION.md").exists() and not (d / "REPORT.md").exists():
+            return d
+    return None
+
+
 def _build_running(root: Path) -> bool:
     marker = root / ".mas" / "build.pid"
     if not marker.exists():
@@ -121,11 +131,34 @@ def create_studio_app(
                 "<script>setTimeout(()=>location.reload(),15000)</script>",
             )
         if report.exists():
+            features_dir = root / "product" / "features"
+            feature_cards = ""
+            if features_dir.is_dir():
+                for d in sorted(features_dir.iterdir()):
+                    state = (
+                        "✅ 已完成" if (d / "REPORT.md").exists()
+                        else ("待确认" if (d / "CONFIRMATION.md").exists() else "…")
+                    )
+                    feature_cards += f"<div class=card>{html.escape(d.name)} — {state}</div>"
+            pending = _pending_feature(root)
+            if pending:
+                return _page(
+                    "确认新功能 / Confirm the new feature",
+                    f"<pre>{_md(pending / 'CONFIRMATION.md')}</pre>"
+                    f"<form method=post action=/feature/build>"
+                    f"<input type=hidden name=slug value='{html.escape(pending.name)}'>"
+                    "<button>开始添加这个功能 / Build this feature</button></form>",
+                )
             return _page(
-                "搭建报告 / Build report",
+                "你的产品 / Your product",
                 f"<pre>{_md(report)}</pre>"
-                "<form method=post action=/reset><button class=secondary>"
-                "修改需求重新开始 / Edit FDR and rebuild</button></form>",
+                f"<h2>功能 / Features</h2>{feature_cards or '<p class=muted>(初版)</p>'}"
+                "<h2>添加新功能 / Add a feature</h2>"
+                "<p class=muted>一次只写一个功能或改动 — 越小越准。One feature per "
+                "FDR — smaller is better.</p>"
+                "<form method=post action=/feature>"
+                "<textarea name=fdr placeholder='例：住户可以取消自己的订单，取消后汇总自动更新。'></textarea>"
+                "<p><button>检查这个功能 / Check this feature</button></p></form>",
             )
         if confirmation.exists():
             return _page(
@@ -166,6 +199,37 @@ def create_studio_app(
         from autoproduct.upstream.autopilot import run_autopilot
 
         run_autopilot(root, root / "FDR.md", yes=False, provider=provider)
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/feature")
+    async def feature(request: Request):
+        form = await request.form()
+        fdr_text = str(form.get("fdr", "")).strip()
+        if fdr_text:
+            fdr_path = root / ".mas" / "pending-feature.md"
+            fdr_path.write_text(fdr_text, encoding="utf-8")
+            from autoproduct.upstream.autopilot import run_feature
+
+            run_feature(root, fdr_path, provider=provider, yes=False)
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/feature/build")
+    async def feature_build(request: Request):
+        form = await request.form()
+        slug = str(form.get("slug", ""))
+        feature_dir = root / "product" / "features" / slug
+        if feature_dir.is_dir() and not _build_running(root):
+            fdr_path = feature_dir / "fdr.md"
+            if spawn is not None:
+                spawn(root)
+            else:
+                proc = subprocess.Popen(  # noqa: S603
+                    [sys.executable, "-m", "autoproduct.cli", "add", str(fdr_path),
+                     "--repo-dir", str(root), "--yes"],
+                    cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                (root / ".mas" / "build.pid").write_text(str(proc.pid), encoding="utf-8")
         return RedirectResponse("/", status_code=303)
 
     @app.post("/build")
