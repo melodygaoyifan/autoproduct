@@ -259,6 +259,14 @@ def hitl_node(state: ReviewState) -> dict[str, Any]:
     return update
 
 
+def _deploy_files(state: ReviewState) -> list[str]:
+    """Gate 5 trigger (§08.3.3): deploy-relevant files in the diff mean the
+    PR should also pass Deployment Review before promotion."""
+    from autoproduct.deploy import detect_deploy_files
+
+    return detect_deploy_files(state.get("diff", {}).get("changed_files", []))
+
+
 def _append_voter_logs(state: ReviewState, outputs: list[VoterOutput]) -> None:
     """Per-voter log (§09.8.5): one appended entry per invocation, the raw
     material the weekly compounding loop aggregates."""
@@ -310,6 +318,7 @@ def post_node(state: ReviewState, *, mirror: YamlMirror) -> dict[str, Any]:
             "findings": state["leader"]["findings"],
             "blocked_voters": state["leader"]["blocked_voters"],
             "test_report": state.get("test_report"),
+            "deploy_review_recommended": _deploy_files(state),
             "hitl": {
                 "issue_url": state.get("hitl_issue_url"),
                 "note": state.get("hitl_note"),

@@ -255,5 +255,39 @@ def bench(
         raise typer.Exit(code=1)
 
 
+_DEPLOY_SKILLS = Path(__file__).resolve().parent.parent.parent / "skills" / "deploy"
+
+
+@app.command("deploy-review")
+def deploy_review(
+    target: str = typer.Argument(..., help="GitHub PR URL or git range"),
+    repo_dir: str = typer.Option(".", help="Repository to review in"),
+    skills_dir: str = typer.Option(str(_DEPLOY_SKILLS), help="Deploy voter skills"),
+    provider: str = typer.Option(None, help="Force one provider (e.g. 'mock')"),
+):
+    """Gate 5 — Deployment Review MAS (§09.11). Recommends; never deploys."""
+    from autoproduct.deploy import run_deploy_review
+
+    result = run_deploy_review(
+        target, repo_dir=repo_dir, skills_dir=skills_dir, provider_override=provider
+    )
+    color = "green" if result.verdict.value == "PROMOTE" else (
+        "yellow" if result.verdict.value == "HOLD_FOR_HUMAN" else "red"
+    )
+    console.print(f"\n[bold {color}]{result.verdict.value}[/bold {color}] — {result.summary}")
+    if result.findings:
+        table = Table(show_lines=False)
+        for col in ("Sev", "Location", "Finding"):
+            table.add_column(col)
+        for f in result.findings:
+            table.add_row(
+                f.severity.value, f"{f.file_path}:{f.line_start}", f"{f.title} [{f.voter}]"
+            )
+        console.print(table)
+    console.print(f"Artifacts: {result.artifacts_dir}")
+    if result.verdict.value.startswith("ESCALATE_"):
+        raise typer.Exit(code=3)
+
+
 def main() -> None:
     sys.exit(app())

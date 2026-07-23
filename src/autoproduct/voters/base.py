@@ -167,14 +167,23 @@ class Voter:
 
     @staticmethod
     def _tool_request(raw: str) -> dict | None:
-        if "tool_request" not in raw:
-            return None
-        try:
-            data = extract_mapping(raw, ("tool_request",))
-        except ValueError:
-            return None
-        request = data.get("tool_request")
-        return request if isinstance(request, dict) else None
+        if "tool_request" in raw:
+            try:
+                data = extract_mapping(raw, ("tool_request",))
+            except ValueError:
+                return None
+            request = data.get("tool_request")
+            return request if isinstance(request, dict) else None
+        # Models sometimes emit the bare shape `tool: grep / args: {...}`
+        # without the wrapper (seen from repo_graph on PR #9) — accept it.
+        if "tool:" in raw and "findings" not in raw:
+            try:
+                data = extract_mapping(raw, ("tool",))
+            except ValueError:
+                return None
+            if isinstance(data.get("tool"), str):
+                return {"tool": data["tool"], "args": data.get("args") or {}}
+        return None
 
     def _parse(self, raw: str) -> VoterOutput:
         data = extract_mapping(raw, ("status", "findings"))
