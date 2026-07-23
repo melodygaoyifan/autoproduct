@@ -18,12 +18,16 @@ _SEVERITY_ICON = {
 }
 
 
+_TEST_ICON = {"passed": "✅", "failed": "❌", "no_tests": "➖", "skipped": "➖", "error": "⚠️"}
+
+
 def render_pr_comment(
     result: LeaderResult,
     *,
     review_id: str,
     mode: str,
     voter_outputs: list[VoterOutput],
+    test_report: dict | None = None,
 ) -> str:
     lines = [
         f"## autoproduct review — **{result.verdict.value}**",
@@ -59,6 +63,14 @@ def render_pr_comment(
     else:
         lines.append("No findings met the reporting threshold.")
         lines.append("")
+
+    if test_report:
+        icon = _TEST_ICON.get(test_report.get("status", ""), "")
+        lines += [
+            f"**Test gate (Gate 2):** {icon} {test_report.get('status')} — "
+            f"{test_report.get('summary')}",
+            "",
+        ]
 
     if result.blocked_voters:
         lines.append(
