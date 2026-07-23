@@ -289,5 +289,34 @@ def deploy_review(
         raise typer.Exit(code=3)
 
 
+@app.command()
+def triage(
+    incident_file: str = typer.Argument(..., help="Incident file (.json/.yaml/.txt)"),
+    repo_dir: str = typer.Option(".", help="Repository to correlate against"),
+    provider: str = typer.Option("anthropic", help="Provider (e.g. 'mock')"),
+    days: int = typer.Option(7, help="Correlation window for recent commits"),
+):
+    """Gate 6 intake — Maintenance MAS (§09.12): triage + root-cause."""
+    from autoproduct.maintenance import Incident, run_maintenance
+
+    incident = Incident.load(incident_file)
+    result = run_maintenance(
+        incident, repo_dir=repo_dir, provider=provider, days=days
+    )
+    color = {
+        "TRIAGED_LOW_PRIORITY": "green",
+        "ROOT_CAUSE_PROPOSED": "yellow",
+    }.get(result.verdict.value, "red")
+    console.print(f"\n[bold {color}]{result.verdict.value}[/bold {color}] — {result.summary}")
+    if result.root_cause:
+        console.print(f"hypothesis: {result.root_cause.hypothesis}")
+        console.print(f"next action: {result.root_cause.next_action}")
+    if result.suspects:
+        console.print("suspects: " + ", ".join(s["sha"] for s in result.suspects))
+    console.print(f"Artifacts: {result.artifacts_dir}")
+    if result.verdict.value.startswith("ESCALATE_"):
+        raise typer.Exit(code=3)
+
+
 def main() -> None:
     sys.exit(app())

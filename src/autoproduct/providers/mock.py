@@ -47,6 +47,7 @@ class MockProvider(Provider):
     def complete(self, *, model: str, system: str, user: str, max_tokens: int = 4096) -> str:
         from autoproduct.compound import COMPOUND_MARKER
         from autoproduct.leader import LEADER_MARKER
+        from autoproduct.maintenance.review import ROOTCAUSE_MARKER, TRIAGE_MARKER
         from autoproduct.verify import VERIFIER_MARKER
 
         if VERIFIER_MARKER in system:
@@ -55,6 +56,24 @@ class MockProvider(Provider):
             return self._lead(user)
         if COMPOUND_MARKER in system:
             return self._compound(user)
+        if TRIAGE_MARKER in system:
+            priority = "P4" if "cosmetic" in user.lower() else "P2"
+            return yaml.safe_dump(
+                {"priority": priority, "category": "crash", "rationale": "mock triage"}
+            )
+        if ROOTCAUSE_MARKER in system:
+            has_suspects = "score" in user
+            return yaml.safe_dump(
+                {
+                    "hypothesis": "mock hypothesis from top suspect"
+                    if has_suspects
+                    else "insufficient evidence",
+                    "confidence": 75 if has_suspects else 30,
+                    "implicated_commit": None,
+                    "implicated_files": [],
+                    "next_action": "propose fix-PR",
+                }
+            )
         files = _FILE_HEADER.findall(user)
         file_path = files[0] if files else "unknown"
         findings = []

@@ -139,8 +139,22 @@ class Voter:
         forced-verdict turn fires when it runs out."""
         provider = get_provider(provider_name)
         messages: list[dict[str, str]] = [{"role": "user", "content": user}]
+        nudged = False
         while True:
             raw = provider.chat(model=model, system=system, messages=messages)
+            if not raw.strip() and not nudged:
+                # Empty responses observed live (context voter, PR #9):
+                # nudge once before treating it as a failed attempt.
+                nudged = True
+                messages.append({"role": "assistant", "content": "(empty response)"})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "Your previous reply was empty. Respond now with "
+                        "ONLY the required YAML (status + findings).",
+                    }
+                )
+                continue
             request = self._tool_request(raw)
             if request is None or toolbox is None:
                 return self._parse(raw)
