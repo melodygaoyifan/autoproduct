@@ -580,6 +580,58 @@ def create(
         raise typer.Exit(code=1)
 
 
+@app.command()
+def studio(
+    repo_dir: str = typer.Option(".", help="Workspace directory"),
+    port: int = typer.Option(8433, help="Port"),
+    profile: str = typer.Option(None, help="Profile (only needed for a new workspace)"),
+):
+    """Founder Studio: the browser UI for the FDR flow (localhost only)."""
+    from autoproduct.studio import serve_studio
+    from autoproduct.upstream import init_workspace
+
+    root = Path(repo_dir).resolve()
+    if not (root / ".mas" / "project.yaml").exists():
+        if not profile:
+            console.print("[red]new workspace: pass --profile web|miniprogram|app[/red]")
+            raise typer.Exit(code=2)
+        init_workspace(root, root.name, profile)
+    console.print(f"Studio: http://127.0.0.1:{port}  (workspace: {root})")
+    serve_studio(root, port=port)
+
+
+@app.command()
+def preview(
+    repo_dir: str = typer.Option(".", help="Workspace directory"),
+    port: int = typer.Option(8500, help="Port for the app"),
+):
+    """Run the built product locally so the founder can try it (web profile)."""
+    import subprocess
+
+    from autoproduct.upstream import load_project
+
+    root = Path(repo_dir).resolve()
+    project = load_project(root)
+    if project.profile == "miniprogram":
+        console.print(
+            "小程序预览：用微信开发者工具打开这个目录即可（工具 → 导入项目）：\n"
+            f"  {root}\n"
+            "Open this directory in WeChat DevTools (import project) to preview."
+        )
+        return
+    for entry in ("app/main.py", "main.py", "app.py"):
+        candidate = root / entry
+        if candidate.exists():
+            console.print(f"starting {entry} — http://127.0.0.1:{port}  (Ctrl-C stops)")
+            subprocess.run(
+                [sys.executable, str(candidate)],
+                cwd=root, env={**__import__("os").environ, "PORT": str(port)},
+            )
+            return
+    console.print("[yellow]no runnable entry found (looked for app/main.py, main.py, app.py)[/yellow]")
+    raise typer.Exit(code=1)
+
+
 def main() -> None:
     sys.exit(app())
 

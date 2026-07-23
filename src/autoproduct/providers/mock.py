@@ -248,6 +248,15 @@ class MockProvider(Provider):
         )
 
     def _implement(self, user: str) -> str:
+        if "review_findings" in user:
+            match = re.search(r'<file path="([^"]+)">\n(.*?)\n</file>', user, re.DOTALL)
+            if not match:
+                return yaml.safe_dump({"files": []})
+            return yaml.safe_dump(
+                {"files": [{"path": match.group(1),
+                            "new_content": match.group(2) + "\n# reviewed\n"}]},
+                sort_keys=False,
+            )
         task = re.search(r"feature_(\w+)`", user)
         module = f"feature_{task.group(1)}" if task else "feature"
         return yaml.safe_dump(

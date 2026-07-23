@@ -140,19 +140,29 @@ def run_autopilot(
         )
         built = run_build(root, spec.slug, provider=provider, model=model)
         verdict = None
+        detail = built.detail
         if built.status == "built":
-            from autoproduct.orchestrator import run_review
-
-            skills = Path(__file__).resolve().parent.parent.parent.parent / "skills"
-            review, _ = run_review(
-                "HEAD~1", repo_dir=str(root), skills_dir=str(skills),
-                provider_override=provider if provider == "mock" else None,
-            )
+            review = _review_head(root, provider)
             verdict = review.verdict.value if review else None
+            # Fix loop: critical/high findings get ONE bounded repair
+            # iteration — recorded, re-reviewed, never silent.
+            serious = [
+                f for f in (review.findings if review else [])
+                if f.severity.value in ("critical", "high")
+            ]
+            if serious and _fix_iteration(root, provider, model, serious):
+                auto_approvals.append(
+                    f"fix iteration ({spec.slug}): {len(serious)} serious review "
+                    "finding(s) fed back to the implementer; suite re-passed"
+                )
+                re_review = _review_head(root, provider)
+                if re_review:
+                    verdict = re_review.verdict.value
+                    detail = (detail + " " if detail else "") + "(after fix iteration)"
         outcomes.append(
             TaskOutcome(
                 task_id=task.id, title=task.title,
-                status=built.status, review_verdict=verdict, detail=built.detail,
+                status=built.status, review_verdict=verdict, detail=detail,
             )
         )
 
@@ -182,6 +192,70 @@ def run_autopilot(
         report_path=str(report_path),
         auto_approvals=auto_approvals,
     )
+
+
+def _review_head(root: Path, provider: str):
+    from autoproduct.orchestrator import run_review
+
+    skills = Path(__file__).resolve().parent.parent.parent.parent / "skills"
+    review, _ = run_review(
+        "HEAD~1", repo_dir=str(root), skills_dir=str(skills),
+        provider_override=provider if provider == "mock" else None,
+    )
+    return review
+
+
+def _fix_iteration(root: Path, provider: str, model: str, findings) -> bool:
+    """One bounded repair pass: findings → implementer → suite must pass →
+    commit. Returns True when a fix commit landed."""
+    import subprocess
+
+    from autoproduct.testing import _pytest_in_subprocess
+    from autoproduct.upstream.build import IMPLEMENTER_MARKER  # noqa: F401
+    from autoproduct.upstream.build import _write_files
+
+    listing = yaml.safe_dump(
+        [
+            {"file": f.file_path, "line": f.line_start, "severity": f.severity.value,
+             "title": f.title, "explanation": f.explanation[:300]}
+            for f in findings[:8]
+        ],
+        sort_keys=False, allow_unicode=True,
+    )
+    sources = {}
+    for f in findings[:8]:
+        path = root / f.file_path
+        if path.is_file() and f.file_path not in sources:
+            sources[f.file_path] = path.read_text(encoding="utf-8", errors="replace")
+    file_blocks = "\n\n".join(
+        f"<file path=\"{p}\">\n{t}\n</file>" for p, t in sources.items()
+    )
+    raw = get_provider(provider).complete(
+        model=model,
+        system=f"You are the {IMPLEMENTER_MARKER}. Fix ONLY the review "
+        "findings below in the provided files — smallest change, complete "
+        "file contents back, no drive-by edits.\n\nRespond with ONLY YAML:\n"
+        "files:\n  - path: ...\n    new_content: |\n      ...",
+        user=f"<review_findings>\n{listing}</review_findings>\n\n{file_blocks}",
+        max_tokens=16384,
+    )
+    try:
+        data = extract_mapping(raw, ("files",))
+        written = _write_files(root, data.get("files") or [])
+    except ValueError:
+        return False
+    if not written:
+        return False
+    if _pytest_in_subprocess(root).status not in ("passed", "no_tests"):
+        subprocess.run(["git", "checkout", "--", "."], cwd=root, capture_output=True)
+        return False
+    subprocess.run(["git", "add", "-A"], cwd=root, capture_output=True)
+    committed = subprocess.run(
+        ["git", "-c", "user.email=autoproduct@local", "-c", "user.name=autoproduct",
+         "commit", "-qm", "fix: address serious review findings"],
+        cwd=root, capture_output=True, text=True,
+    )
+    return committed.returncode == 0
 
 
 def _topo_order(tasks):
