@@ -40,6 +40,13 @@ _KNOWN_EXAMPLE_CREDENTIALS = {
     "wJalrXUtnFXKEXAMPLEKEY",
 }
 
+# For the credential-ASSIGNMENT pattern only (never for AWS/sk-/private-key
+# matches): values that declare themselves fake are fixtures, not leaks
+# (PR #16 self-review flagged tests' "test-webhook-secret").
+_PLACEHOLDER_VALUE = re.compile(
+    r"(?i)['\"][^'\"]*(test|example|dummy|placeholder|changeme|fake)[^'\"]*['\"]"
+)
+
 
 def secret_scan(diff: ParsedDiff, repo_dir: str) -> ToolReport:
     findings = []
@@ -49,6 +56,8 @@ def secret_scan(diff: ParsedDiff, repo_dir: str) -> ToolReport:
                 continue
             for pattern, label in _SECRET_PATTERNS:
                 if pattern.search(text):
+                    if label == "Hardcoded credential assignment" and _PLACEHOLDER_VALUE.search(text):
+                        break
                     findings.append(
                         tool_finding(
                             "secret_scan",

@@ -18,6 +18,20 @@ def test_secret_scan_catches_aws_key():
     assert report.findings[0].verification == "VERIFIED"
 
 
+def test_secret_scan_skips_placeholder_assignment_values():
+    diff = parse_unified_diff(
+        _diff("tests/conftest.py", 'SECRET = "test-webhook-secret-value"')
+    )
+    assert probes.secret_scan(diff, ".").findings == []
+
+
+def test_secret_scan_still_catches_realistic_assignments():
+    diff = parse_unified_diff(
+        _diff("config.py", 'API_KEY = "kJ9mPq2xVn8LwRt5YbCd3FgH"')
+    )
+    assert len(probes.secret_scan(diff, ".").findings) == 1
+
+
 def test_secret_scan_skips_documentation_example_keys():
     diff = parse_unified_diff(_diff("config.py", 'AWS_KEY = "AKIAIOSFODNN7EXAMPLE"'))
     assert probes.secret_scan(diff, ".").findings == []

@@ -33,7 +33,13 @@ REVIEW_ACTIONS = {"opened", "synchronize", "reopened", "ready_for_review"}
 
 
 def _spawn(args: list[str], repo_dir: str) -> int:
-    """Detached worker: the request cycle never blocks on a review."""
+    """Detached worker: the request cycle never blocks on a review.
+
+    Deliberate exception to the subprocess timeout/capture convention: a
+    worker outlives the request by design (reviews take minutes), its
+    output lands in the `.mas/` mirrors, and its lifecycle belongs to the
+    OS — a timeout here would kill in-flight reviews.
+    """
     proc = subprocess.Popen(  # noqa: S603 — fixed argv, no shell
         [sys.executable, "-m", "autoproduct.cli", *args],
         cwd=repo_dir,
@@ -83,6 +89,18 @@ def create_app(repo_dir: str = ".", *, spawn=_spawn) -> FastAPI:
 
     @app.post("/incidents", status_code=202)
     async def incidents(request: Request):
+        # Same trust bar as the GitHub webhook (PR #16 self-review finding):
+        # incident intake mutates state and spawns work — bearer-token
+        # authenticated with the shared secret.
+        secret = os.environ.get("AUTOPRODUCT_WEBHOOK_SECRET")
+        if not secret:
+            raise HTTPException(503, "AUTOPRODUCT_WEBHOOK_SECRET is not configured")
+        auth = request.headers.get("Authorization", "")
+        if not (
+            auth.startswith("Bearer ")
+            and hmac.compare_digest(auth.removeprefix("Bearer "), secret)
+        ):
+            raise HTTPException(401, "missing or invalid bearer token")
         payload = await request.json()
         title = str(payload.get("title", "")).strip()
         if not title:
@@ -107,12 +125,19 @@ def create_app(repo_dir: str = ".", *, spawn=_spawn) -> FastAPI:
         return {"queued": True, "incident_id": incident_id, "worker_pid": pid}
 
     @app.get("/reviews")
-    def reviews():
+    def reviews(limit: int = 50):
+        # Sync handler (FastAPI threadpool) + bounded, newest-first listing
+        # (PR #16 self-review: unbounded scan per request).
         reviews_dir = Path(repo) / ".mas" / "reviews"
         if not reviews_dir.is_dir():
             return []
         rows = []
-        for review_dir in sorted(reviews_dir.iterdir()):
+        newest_first = sorted(
+            (d for d in reviews_dir.iterdir() if d.is_dir()),
+            key=lambda d: d.stat().st_mtime,
+            reverse=True,
+        )[: max(1, min(limit, 500))]
+        for review_dir in newest_first:
             final = sorted(review_dir.glob("[0-9]*-final.yaml"))
             if final:
                 data = yaml.safe_load(final[-1].read_text(encoding="utf-8")) or {}

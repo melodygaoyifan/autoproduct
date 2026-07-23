@@ -69,10 +69,27 @@ def test_non_review_actions_ignored(harness):
     assert spawned == []
 
 
+AUTH = {"Authorization": f"Bearer {SECRET}"}
+
+
+def test_incident_without_token_rejected(harness):
+    client, spawned, _ = harness
+    assert client.post("/incidents", json={"title": "x"}).status_code == 401
+    assert (
+        client.post(
+            "/incidents", json={"title": "x"}, headers={"Authorization": "Bearer nope"}
+        ).status_code
+        == 401
+    )
+    assert spawned == []
+
+
 def test_incident_post_writes_inbox_and_spawns_triage(harness):
     client, spawned, tmp_path = harness
     response = client.post(
-        "/incidents", json={"title": "Checkout 500s", "body": "spike", "source": "sentry"}
+        "/incidents",
+        json={"title": "Checkout 500s", "body": "spike", "source": "sentry"},
+        headers=AUTH,
     )
     assert response.status_code == 202
     incident_id = response.json()["incident_id"]
@@ -84,7 +101,7 @@ def test_incident_post_writes_inbox_and_spawns_triage(harness):
 
 def test_incident_without_title_rejected(harness):
     client, spawned, _ = harness
-    assert client.post("/incidents", json={"body": "??"}).status_code == 422
+    assert client.post("/incidents", json={"body": "??"}, headers=AUTH).status_code == 422
     assert spawned == []
 
 
