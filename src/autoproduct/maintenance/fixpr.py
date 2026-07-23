@@ -10,7 +10,6 @@ its tests is abandoned and reported — never pushed.
 from __future__ import annotations
 
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
@@ -19,6 +18,12 @@ from pydantic import BaseModel, Field
 from autoproduct import github
 from autoproduct.maintenance.review import Incident, RootCauseResult
 from autoproduct.providers import get_provider
+from autoproduct.testing import (
+    _pytest_in_docker,
+    _pytest_in_subprocess,
+    _run,
+    docker_available,
+)
 from autoproduct.yamlx import extract_mapping
 
 FIXPR_MARKER = "fix-PR author in a production-maintenance system"
@@ -53,10 +58,6 @@ class FixAttempt(BaseModel):
     pr_url: str | None = None
     detail: str = ""
     files_changed: list[str] = Field(default_factory=list)
-
-
-def _run(cmd: list[str], cwd: str | Path, timeout: int = 300):
-    return subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout)
 
 
 def _gather_sources(repo: Path, root_cause: RootCauseResult) -> dict[str, str]:
@@ -126,9 +127,13 @@ def generate_fix_pr(
         for f in files:
             (worktree / f["path"]).write_text(f["new_content"], encoding="utf-8")
 
-        from autoproduct.testing import _pytest_in_subprocess
-
-        report = _pytest_in_subprocess(worktree)
+        # The fix is LLM-generated code: verify it in the T3 sandbox when
+        # available, same as Gate 2 (PR #11 self-review finding).
+        report = (
+            _pytest_in_docker(worktree)
+            if docker_available()
+            else _pytest_in_subprocess(worktree)
+        )
         if report.status not in ("passed", "no_tests"):
             return FixAttempt(
                 status="tests_failed",

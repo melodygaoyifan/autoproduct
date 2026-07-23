@@ -145,14 +145,30 @@ def run_maintenance(
     triage = TriageResult.model_validate(extract_mapping(triage_raw, ("priority",)))
     mirror.write("triage", {"triage": triage.model_dump(mode="json")})
 
+    from autoproduct.maintenance import skills_registry
+
+    learned = skills_registry.match(
+        incident.text, skills_registry.load_registry(repo_dir)
+    )
+    if learned:
+        mirror.write(
+            "learned_skill", {"applied": learned.name, "description": learned.description}
+        )
+
     root_cause = None
     if triage.priority in ("P1", "P2", "P3"):
+        skill_block = (
+            f"\n\n<learned_skill name=\"{learned.name}\">\n{learned.body}\n</learned_skill>"
+            if learned
+            else ""
+        )
         rc_raw = provider_impl.complete(
             model=rootcause_model,
             system=_ROOTCAUSE_SYSTEM,
             user=(
                 f"<incident>\n{incident.text}\n</incident>\n\n"
                 f"<suspect_commits>\n{_render_suspects(suspects)}\n</suspect_commits>"
+                f"{skill_block}"
             ),
             max_tokens=1024,
         )
@@ -168,6 +184,21 @@ def run_maintenance(
     else:
         verdict = MaintenanceVerdict.ESCALATE_INCIDENT_UNRESOLVED
 
+    similar = skills_registry.record_incident(repo_dir, incident.id, incident.text)
+    drafted = None
+    if len(similar) + 1 >= skills_registry.RECURRENCE_THRESHOLD:
+        drafted = skills_registry.maybe_draft_skill(
+            repo_dir,
+            [e.get("text", "") for e in similar] + [incident.text],
+            provider=provider,
+            model=triage_model,
+        )
+        if drafted:
+            mirror.write(
+                "skill_drafted",
+                {"name": drafted.name, "status": drafted.status, "path": drafted.path},
+            )
+
     result = MaintenanceResult(
         incident_id=incident.id,
         verdict=verdict,
@@ -181,7 +212,10 @@ def run_maintenance(
                 if root_cause
                 else "no root-cause pass (P4)"
             )
-            + f"; {len(suspects)} suspect commit(s); {time.monotonic() - started:.0f}s"
+            + f"; {len(suspects)} suspect commit(s)"
+            + (f"; learned skill applied: {learned.name}" if learned else "")
+            + (f"; skill drafted: {drafted.name} (proposed)" if drafted else "")
+            + f"; {time.monotonic() - started:.0f}s"
         ),
         artifacts_dir=str(mirror.dir),
     )

@@ -79,6 +79,17 @@ class MockProvider(Provider):
 
         if FIXPR_MARKER in system:
             return self._fixpr(user)
+        from autoproduct.maintenance.skills_registry import SKILL_DRAFT_MARKER
+
+        if SKILL_DRAFT_MARKER in system:
+            return yaml.safe_dump(
+                {
+                    "name": "mock-recurring-class",
+                    "description": "mock skill for a recurring incident class",
+                    "body": "Check the usual suspect first.",
+                },
+                sort_keys=False,
+            )
         files = _FILE_HEADER.findall(user)
         file_path = files[0] if files else "unknown"
         findings = []
