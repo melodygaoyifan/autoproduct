@@ -240,6 +240,13 @@ def run_planning(
             )
             tasks, dag_issues, critics = [], ["unparseable planner output"], []
             continue
+        for task in tasks:
+            if not task.files_expected:
+                # lane_check only bites when globs exist; derive a fallback
+                # from blast radius when the planner omits them.
+                task.files_expected = blast_radius(
+                    repo_dir, f"{task.title} {task.description}", cap=3
+                )
         budget = float(
             yaml.safe_load(
                 (Path(repo_dir) / ".mas" / "project.yaml").read_text(encoding="utf-8")

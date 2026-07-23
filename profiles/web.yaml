@@ -11,4 +11,4 @@ spec_extras:
 checks:
   - playwright (availability-gated)
   - lighthouse budgets (availability-gated)
-stack_hint: Keep the stack boring unless the brief demands otherwise (e.g. FastAPI/Flask + vanilla or React frontend).
+stack_hint: Keep the stack boring — Python stdlib (http.server, sqlite3) or FastAPI; any other framework MUST be added to requirements.txt or it won't run. Vanilla JS frontend unless the brief demands otherwise.

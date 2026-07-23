@@ -74,16 +74,50 @@ def load_registry(repo_dir: str | Path) -> list[LearnedSkill]:
     return skills
 
 
+COSINE_MIN = 0.30
+
+
+def _tfidf_cosine(query: set[str], docs: list[set[str]], target: int) -> float:
+    """TF-IDF cosine between the query and docs[target], idf over all docs
+    plus the query. Pure python — a real matcher upgrade over raw overlap;
+    the embedding/FAISS tier (ADR-006) slots in when an embedding provider
+    is configured."""
+    import math
+
+    corpus = docs + [query]
+    n_docs = len(corpus)
+
+    def idf(token: str) -> float:
+        containing = sum(1 for d in corpus if token in d)
+        return math.log((1 + n_docs) / (1 + containing)) + 1
+
+    def vector(doc: set[str]) -> dict[str, float]:
+        return {t: idf(t) for t in doc}
+
+    a, b = vector(query), vector(docs[target])
+    dot = sum(w * b[t] for t, w in a.items() if t in b)
+    norm = math.sqrt(sum(w * w for w in a.values())) * math.sqrt(
+        sum(w * w for w in b.values())
+    )
+    return dot / norm if norm else 0.0
+
+
 def match(incident_text: str, skills: list[LearnedSkill]) -> LearnedSkill | None:
-    """Best APPROVED skill by trigger-token overlap; None below threshold."""
-    tokens = _tokens(incident_text)
-    best, best_overlap = None, 0
-    for skill in skills:
-        if skill.status != "approved":
+    """Best APPROVED skill by TF-IDF cosine over trigger tokens, with the
+    raw-overlap floor as a guard against degenerate short texts."""
+    query = _tokens(incident_text)
+    approved = [s for s in skills if s.status == "approved"]
+    if not approved:
+        return None
+    docs = [set(s.trigger_tokens) for s in approved]
+    best, best_score = None, 0.0
+    for i, skill in enumerate(approved):
+        overlap = len(query & docs[i])
+        if overlap < MATCH_MIN_OVERLAP:
             continue
-        overlap = len(tokens & set(skill.trigger_tokens))
-        if overlap >= MATCH_MIN_OVERLAP and overlap > best_overlap:
-            best, best_overlap = skill, overlap
+        score = _tfidf_cosine(query, docs, i)
+        if score >= COSINE_MIN and score > best_score:
+            best, best_score = skill, score
     return best
 
 

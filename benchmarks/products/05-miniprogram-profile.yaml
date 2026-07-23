@@ -1,0 +1,20 @@
+profile: miniprogram
+fdr: 小程序：团长发起接龙，住户下单。必须有：发起、下单。
+probes:
+- name: store-works
+  script: '
+
+    import glob, importlib
+
+    modules = sorted(glob.glob("feature_*.py")) or ["feature.py"]
+
+    mod = importlib.import_module(modules[0][:-3])
+
+    store = mod.ItemStore()
+
+    assert store.add("a") == 1
+
+    print("store ok")
+
+    '
+name: 05-miniprogram-profile

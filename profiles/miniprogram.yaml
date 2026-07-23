@@ -10,6 +10,7 @@ spec_extras:
   - List every remote domain the feature calls (goes to the whitelist request).
   - Note any new permission (授权 scope) the feature needs and when it is requested.
   - State the page/subpackage placement and its size impact.
+  - Business logic lives in pure JS modules under utils/ (no wx.* calls inside), with *.test.js skeletons runnable by `node --test` — page files only wire events to those modules. Page-level tests use miniprogram-simulate when the project installs it.
 checks:
   - package size budget (deterministic)
   - domain whitelist extraction (deterministic)

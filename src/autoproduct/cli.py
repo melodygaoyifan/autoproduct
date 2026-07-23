@@ -742,6 +742,20 @@ def product_bench(
     console.print(f"saved: {save_summary(summary, repo_dir)}")
 
 
+@app.command()
+def recover(repo_dir: str = typer.Option(".", help="Repository the reviews ran in")):
+    """Continue reviews that crashed mid-run from their checkpoints."""
+    from autoproduct.orchestrator import recover_reviews
+
+    results = recover_reviews(repo_dir)
+    if not results:
+        console.print("nothing to recover")
+        return
+    for r in results:
+        console.print(f"  {r['review_id']}: {r['status']}"
+                      + (f" → {r.get('verdict')}" if r.get("verdict") else ""))
+
+
 def main() -> None:
     sys.exit(app())
 

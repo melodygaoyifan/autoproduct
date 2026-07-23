@@ -473,6 +473,52 @@ def is_interrupted(state: ReviewState) -> bool:
     return "__interrupt__" in state
 
 
+def recover_reviews(repo_dir: str = ".") -> list[dict]:
+    """Crash recovery (single-instance supervision): reviews with a
+    meta.yaml but no final.yaml continue from their SQLite checkpoint —
+    LangGraph re-invokes from the last completed super-step. Reviews that
+    never checkpointed are reported, not guessed at. The Celery supervisor
+    remains the multi-instance upgrade path."""
+    reviews_dir = Path(repo_dir) / ".mas" / "reviews"
+    results = []
+    if not reviews_dir.is_dir():
+        return results
+    for review_dir in sorted(reviews_dir.iterdir()):
+        meta_path = review_dir / "meta.yaml"
+        if not meta_path.exists() or list(review_dir.glob("[0-9]*-final.yaml")):
+            continue
+        review_id = review_dir.name
+        meta = yaml_lib.safe_load(meta_path.read_text(encoding="utf-8"))
+        try:
+            app, _ = build_graph(
+                repo_dir=meta["repo_dir"],
+                skills_dir=meta["skills_dir"],
+                provider_override=meta.get("provider_override"),
+                review_id=review_id,
+            )
+            config = {"configurable": {"thread_id": review_id}}
+            snapshot = app.get_state(config)
+            if not snapshot.values:
+                results.append({"review_id": review_id, "status": "no_checkpoint"})
+                continue
+            if snapshot.tasks and any(t.interrupts for t in snapshot.tasks):
+                results.append({"review_id": review_id, "status": "awaiting_human"})
+                continue
+            final = app.invoke(None, config=config)
+            results.append(
+                {
+                    "review_id": review_id,
+                    "status": "recovered",
+                    "verdict": (final.get("leader") or {}).get("verdict"),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 — one broken review never blocks the rest
+            results.append(
+                {"review_id": review_id, "status": "error", "detail": str(exc)[:200]}
+            )
+    return results
+
+
 def resume_review(
     review_id: str, decision: str, *, repo_dir: str = "."
 ) -> tuple[LeaderResult | None, ReviewState]:

@@ -202,6 +202,8 @@ def run_build(
     provider: str = "anthropic",
     model: str = "claude-opus-4-8",
     in_branch: bool = False,
+    task_lane: str = "core",
+    task_estimate_hours: float = 0.0,
 ) -> BuildResult:
     """in_branch=True: build in an isolated worktree on branch
     build/<slug> (parallel-lane mode) — the caller merges and then calls
@@ -229,7 +231,8 @@ def run_build(
         try:
             result = _run_build_inner(
                 worktree, slug, provider=provider, model=model, started=started,
-                bookkeeping=False,
+                bookkeeping=False, task_lane=task_lane,
+                task_estimate_hours=task_estimate_hours,
             )
             result.detail = (result.detail + " " if result.detail else "") + f"branch build/{slug}"
             return result
@@ -239,7 +242,9 @@ def run_build(
 
             _shutil.rmtree(worktree, ignore_errors=True)
     return _run_build_inner(
-        repo, slug, provider=provider, model=model, started=started, bookkeeping=True
+        repo, slug, provider=provider, model=model, started=started,
+        bookkeeping=True, task_lane=task_lane,
+        task_estimate_hours=task_estimate_hours,
     )
 
 
@@ -251,6 +256,8 @@ def _run_build_inner(
     model: str,
     started: float,
     bookkeeping: bool,
+    task_lane: str = "core",
+    task_estimate_hours: float = 0.0,
 ) -> BuildResult:
     project = load_project(repo)
     spec: Spec = load_spec(repo, slug)
@@ -354,7 +361,9 @@ def _run_build_inner(
     try:
         from autoproduct.upstream.plan import record_actual
 
-        record_actual(repo, "core", 1.0, time.monotonic() - started)
+        record_actual(
+            repo, task_lane, task_estimate_hours or 1.0, time.monotonic() - started
+        )
     except Exception:  # noqa: BLE001 — bookkeeping never fails a build
         pass
 

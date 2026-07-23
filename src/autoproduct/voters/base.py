@@ -117,6 +117,11 @@ class Voter:
             except Exception as exc:  # noqa: BLE001 — transient classes retry
                 last_error = f"{type(exc).__name__}: {exc}"
                 attempts += 1
+        if "0 chars" in last_error:
+            from autoproduct.providers import anthropic_provider
+
+            if anthropic_provider.LAST_EMPTY_META:
+                last_error += f" | api_meta: {anthropic_provider.LAST_EMPTY_META}"
         return VoterOutput(
             voter=self.spec.name,
             model=model,
