@@ -73,6 +73,7 @@ def run_autopilot(
     model: str = "claude-opus-4-8",
     yes: bool = False,
     max_tasks: int = 12,
+    parallel: bool = False,
 ) -> AutopilotResult:
     root = Path(workspace).resolve()
     fdr_text = Path(fdr_path).read_text(encoding="utf-8")
@@ -113,6 +114,15 @@ def run_autopilot(
 
     approve_brief(root)
     auto_approvals.append("Gate U1 (brief): confirmed via --yes on the plain-language summary")
+
+    from autoproduct.upstream.provisioning import provision_local, write_cloud_guide
+    from autoproduct.upstream.workspace import load_project as _lp
+
+    provision_local(root)
+    write_cloud_guide(root, _lp(root).profile)
+    auto_approvals.append(
+        "services: local SQLite provisioned (data/app.db); cloud options in SERVICES.md"
+    )
     plan = run_planning(root, provider=provider)
     if plan.status == "blocked":
         return AutopilotResult(
@@ -124,6 +134,13 @@ def run_autopilot(
 
     outcomes: list[TaskOutcome] = []
     ordered = _topo_order(load_plan(root).tasks)[:max_tasks]
+    if parallel:
+        auto_approvals.append("parallel lanes: wave scheduling (one task per lane per wave)")
+        for wave in schedule_waves(ordered):
+            outcomes += _build_wave_parallel(
+                root, wave, provider=provider, model=model, auto_approvals=auto_approvals
+            )
+        ordered = []
     for task in ordered:
         spec = run_spec_stage(
             root, f"{task.description} (task:{task.id})", provider=provider
@@ -421,6 +438,97 @@ def run_feature(
         assessment=assessment, confirmation=confirmation, outcomes=outcomes,
         report_path=str(feature_dir / "REPORT.md"), auto_approvals=auto_approvals,
     )
+
+
+def schedule_waves(tasks) -> list[list]:
+    """Dependency waves with at most ONE task per lane per wave — lane_check
+    guarantees cross-lane tasks don't share files, so a wave's builds can
+    run in parallel worktrees and merge cleanly."""
+    done: set[str] = set()
+    remaining = list(tasks)
+    waves: list[list] = []
+    while remaining:
+        ready = [t for t in remaining if set(t.depends_on) <= done]
+        if not ready:
+            break  # cycle — dag_check blocks these upstream
+        wave, lanes_used = [], set()
+        for task in ready:
+            if task.lane in lanes_used:
+                continue
+            wave.append(task)
+            lanes_used.add(task.lane)
+        for task in wave:
+            done.add(task.id)
+            remaining.remove(task)
+        waves.append(wave)
+    return waves
+
+
+def _build_wave_parallel(root, wave, *, provider, model, auto_approvals):
+    """Each task of the wave builds in its own worktree branch; merges are
+    applied serially afterwards; bookkeeping runs post-merge."""
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor
+
+    from autoproduct.upstream.build import finalize_build_bookkeeping
+
+    def build_one(item):
+        task, spec_slug = item
+        return task, run_build(
+            root, spec_slug, provider=provider, model=model, in_branch=True
+        )
+
+    prepared = []
+    outcomes = []
+    for task in wave:
+        spec = run_spec_stage(root, f"{task.description} (task:{task.id})", provider=provider)
+        if spec.status != "proposed":
+            outcomes.append(
+                TaskOutcome(task_id=task.id, title=task.title, status="spec_blocked")
+            )
+            continue
+        approve_spec(root, spec.slug)
+        auto_approvals.append(f"Gate U3 ({spec.slug}): auto — ears_lint + coverage passed")
+        # Commit the spec in main BEFORE branching: lane worktrees see it in
+        # HEAD, and the merge back can't collide with untracked spec files.
+        subprocess.run(["git", "add", f"specs/{spec.slug}"], cwd=root, capture_output=True)
+        subprocess.run(
+            ["git", "-c", "user.email=autoproduct@local", "-c", "user.name=autoproduct",
+             "commit", "-qm", f"spec({spec.slug}): approved"],
+            cwd=root, capture_output=True,
+        )
+        prepared.append((task, spec.slug))
+
+    with ThreadPoolExecutor(max_workers=max(1, len(prepared))) as pool:
+        built = list(pool.map(build_one, prepared))
+
+    for task, result in built:
+        if result.status != "built":
+            outcomes.append(
+                TaskOutcome(task_id=task.id, title=task.title,
+                            status=result.status, detail=result.detail)
+            )
+            continue
+        merged = subprocess.run(
+            ["git", "-c", "user.email=autoproduct@local", "-c", "user.name=autoproduct",
+             "merge", "--no-ff", "-m", f"merge build/{result.slug}", f"build/{result.slug}"],
+            cwd=root, capture_output=True, text=True,
+        )
+        subprocess.run(["git", "branch", "-D", f"build/{result.slug}"],
+                       cwd=root, capture_output=True)
+        if merged.returncode != 0:
+            subprocess.run(["git", "merge", "--abort"], cwd=root, capture_output=True)
+            outcomes.append(
+                TaskOutcome(task_id=task.id, title=task.title, status="merge_conflict",
+                            detail=merged.stderr[:200] or merged.stdout[:200])
+            )
+            continue
+        finalize_build_bookkeeping(root, result.slug, result.files_written)
+        outcomes.append(
+            TaskOutcome(task_id=task.id, title=task.title, status="built",
+                        detail=f"parallel lane {task.lane}")
+        )
+    return outcomes
 
 
 def _topo_order(tasks):

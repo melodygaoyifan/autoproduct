@@ -32,6 +32,43 @@ from fastapi import FastAPI, HTTPException, Request
 REVIEW_ACTIONS = {"opened", "synchronize", "reopened", "ready_for_review"}
 
 
+def _jobs_path(repo_dir: str) -> Path:
+    return Path(repo_dir) / ".mas" / "jobs.yaml"
+
+
+def _record_job(repo_dir: str, pid: int, args: list[str]) -> None:
+    path = _jobs_path(repo_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    jobs = (yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else []) or []
+    jobs = jobs[-200:]
+    jobs.append({"pid": pid, "args": args, "status": "running"})
+    path.write_text(yaml.safe_dump(jobs, sort_keys=False), encoding="utf-8")
+
+
+def _reconcile_jobs(repo_dir: str) -> list[dict]:
+    """Lightweight supervision: a 'running' job whose pid is gone is marked
+    finished (its artifacts tell the real story) — and reviews that died
+    mid-flight remain resumable via their SQLite checkpoints. The Celery
+    supervisor stays the multi-instance upgrade path."""
+    import os
+
+    path = _jobs_path(repo_dir)
+    if not path.exists():
+        return []
+    jobs = yaml.safe_load(path.read_text(encoding="utf-8")) or []
+    changed = False
+    for job in jobs:
+        if job.get("status") == "running":
+            try:
+                os.kill(int(job["pid"]), 0)
+            except (ProcessLookupError, PermissionError, ValueError):
+                job["status"] = "finished"
+                changed = True
+    if changed:
+        path.write_text(yaml.safe_dump(jobs, sort_keys=False), encoding="utf-8")
+    return jobs
+
+
 def _spawn(args: list[str], repo_dir: str) -> int:
     """Detached worker: the request cycle never blocks on a review.
 
@@ -47,6 +84,7 @@ def _spawn(args: list[str], repo_dir: str) -> int:
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
+    _record_job(repo_dir, proc.pid, args)
     return proc.pid
 
 
@@ -123,6 +161,10 @@ def create_app(repo_dir: str = ".", *, spawn=_spawn) -> FastAPI:
         )
         pid = spawn(["triage", str(path)], repo)
         return {"queued": True, "incident_id": incident_id, "worker_pid": pid}
+
+    @app.get("/jobs")
+    def jobs():
+        return _reconcile_jobs(repo)
 
     @app.get("/reviews")
     def reviews(limit: int = 50):

@@ -20,7 +20,12 @@ import yaml
 from pydantic import BaseModel, Field
 
 from autoproduct.providers import get_provider
-from autoproduct.testing import _pytest_in_docker, _pytest_in_subprocess, docker_available
+from autoproduct.testing import (
+    _pytest_in_docker,
+    _pytest_in_subprocess,
+    _run,
+    docker_available,
+)
 from autoproduct.upstream.spec import Spec, load_spec
 from autoproduct.upstream.workspace import load_project
 from autoproduct.yamlx import extract_mapping
@@ -177,15 +182,76 @@ def _related_sources(repo: Path, spec: Spec, cap_files: int = 6, cap_lines: int 
     return "\n\n".join(blocks)
 
 
+def finalize_build_bookkeeping(repo_dir: str | Path, slug: str, files: list[str]) -> None:
+    """Post-build records: spec frozen, design memory, changelog, actuals.
+    Split out so parallel worktree builds can run it after their merge."""
+    repo = Path(repo_dir).resolve()
+    spec = load_spec(repo, slug)
+    spec.built = True
+    from autoproduct.upstream.spec import _save as _save_spec
+
+    _save_spec(repo, spec)
+    _append_design_memory(repo, spec, files)
+    _write_changelog_fragment(repo, spec, files)
+
+
 def run_build(
     repo_dir: str | Path,
     slug: str,
     *,
     provider: str = "anthropic",
     model: str = "claude-opus-4-8",
+    in_branch: bool = False,
 ) -> BuildResult:
+    """in_branch=True: build in an isolated worktree on branch
+    build/<slug> (parallel-lane mode) — the caller merges and then calls
+    finalize_build_bookkeeping. Default: build in place, all-inclusive."""
     started = time.monotonic()
     repo = Path(repo_dir).resolve()
+    if in_branch:
+        import tempfile
+
+        worktree = Path(tempfile.mkdtemp(prefix=f"autoproduct-lane-{slug[:16]}-"))
+        added = _run(
+            ["git", "worktree", "add", "-B", f"build/{slug}", str(worktree), "HEAD"], repo
+        )
+        if added.returncode != 0:
+            return BuildResult(slug=slug, status="error", detail=added.stderr[:300])
+        # .mas/ is gitignored config, not history — the lane worktree needs
+        # the project + services config to build.
+        (worktree / ".mas").mkdir(exist_ok=True)
+        for config in ("project.yaml", "services.yaml"):
+            source = repo / ".mas" / config
+            if source.exists():
+                (worktree / ".mas" / config).write_text(
+                    source.read_text(encoding="utf-8"), encoding="utf-8"
+                )
+        try:
+            result = _run_build_inner(
+                worktree, slug, provider=provider, model=model, started=started,
+                bookkeeping=False,
+            )
+            result.detail = (result.detail + " " if result.detail else "") + f"branch build/{slug}"
+            return result
+        finally:
+            _run(["git", "worktree", "remove", "--force", str(worktree)], repo)
+            import shutil as _shutil
+
+            _shutil.rmtree(worktree, ignore_errors=True)
+    return _run_build_inner(
+        repo, slug, provider=provider, model=model, started=started, bookkeeping=True
+    )
+
+
+def _run_build_inner(
+    repo: Path,
+    slug: str,
+    *,
+    provider: str,
+    model: str,
+    started: float,
+    bookkeeping: bool,
+) -> BuildResult:
     project = load_project(repo)
     spec: Spec = load_spec(repo, slug)
     if spec.status != "approved":
@@ -200,9 +266,13 @@ def run_build(
     claude_md = repo / "CLAUDE.md"
     constraints = claude_md.read_text(encoding="utf-8") if claude_md.exists() else ""
     existing = _related_sources(repo, spec)
+    from autoproduct.upstream.provisioning import services_context
+
+    services = services_context(repo)
     base_user = (
         f"<constraints>\n{constraints}\n</constraints>\n\n"
-        f"<repo_tree>\n{_file_tree(repo)}\n</repo_tree>\n\n"
+        + (f"<services>\n{services}\n</services>\n\n" if services else "")
+        + f"<repo_tree>\n{_file_tree(repo)}\n</repo_tree>\n\n"
         + (f"{existing}\n\n" if existing else "")
         + "You are EXTENDING the existing product above — integrate with it, "
         "never recreate it. Existing test files are read-only to you.\n\n"
@@ -240,14 +310,15 @@ def run_build(
             return BuildResult(
                 slug=slug, status="error", iterations=iteration, detail="implementer returned no files"
             )
-        report = _run_tests(repo)
+        from autoproduct.testing import combine_reports, run_js_tests
+
+        report = combine_reports(_run_tests(repo), run_js_tests(repo))
         python_skeletons = any(s.path.endswith(".py") for s in spec.test_skeletons)
         if report.status == "passed" or (
-            report.status == "no_tests" and not python_skeletons
+            report.status in ("no_tests", "skipped") and not python_skeletons
         ):
-            # Non-Python stacks (小程序 WXML/JS, RN) have no pytest gate yet;
-            # their skeletons run under the profile's own runner (future
-            # work) and the review stage still judges the diff.
+            # skipped = JS tests exist but no node runtime; the skip is
+            # visible in the report and review still judges the diff.
             break
         feedback = report.detail or report.summary
     else:
@@ -278,15 +349,8 @@ def run_build(
         ["git", "rev-parse", "--short", "HEAD"], cwd=repo, capture_output=True, text=True
     ).stdout.strip()
 
-    # Post-build bookkeeping: spec frozen (SCR is the only change channel),
-    # architecture memory appended, changelog fragment written, actuals
-    # recorded for estimate calibration.
-    from autoproduct.upstream.spec import _save as _save_spec
-
-    spec.built = True
-    _save_spec(repo, spec)
-    _append_design_memory(repo, spec, written)
-    _write_changelog_fragment(repo, spec, written)
+    if bookkeeping:
+        finalize_build_bookkeeping(repo, slug, written)
     try:
         from autoproduct.upstream.plan import record_actual
 

@@ -136,6 +136,7 @@ def _run_gate_in_worktree(
         report = _pytest_in_docker(worktree)
     else:
         report = _pytest_in_subprocess(worktree)
+    report = combine_reports(report, run_js_tests(worktree))
 
     if mode == "deep" and report.status == "passed":
         report.mutation = run_mutation(worktree, changed_files)
@@ -160,6 +161,57 @@ def pytest_cmd(worktree: Path) -> list[str]:
 def _pytest_in_subprocess(worktree: Path) -> TestReport:
     proc = _run(pytest_cmd(worktree), worktree)
     return _classify(proc.returncode, proc.stdout or proc.stderr, sandbox="subprocess")
+
+
+def _has_js_tests(root: Path) -> bool:
+    return any(root.glob("tests/**/*.test.js")) or any(root.glob("**/*.test.js"))
+
+
+def run_js_tests(worktree: Path) -> TestReport | None:
+    """JS/小程序 test gate: `npm test` when package.json defines it, else
+    `node --test` over *.test.js files. None means no JS surface; a missing
+    node runtime is a VISIBLE skip, never a silent pass."""
+    if not _has_js_tests(worktree) and not (worktree / "package.json").exists():
+        return None
+    if not shutil.which("node"):
+        return TestReport(
+            status="skipped",
+            summary="JS tests present but node is not installed — install "
+            "Node.js to gate them (they currently pass on review alone)",
+        )
+    package = worktree / "package.json"
+    if package.exists() and shutil.which("npm"):
+        import json
+
+        scripts = (json.loads(package.read_text(encoding="utf-8")) or {}).get("scripts", {})
+        if "test" in scripts:
+            proc = _run(["npm", "test", "--silent"], worktree)
+            return _classify(proc.returncode, proc.stdout or proc.stderr, sandbox="subprocess")
+    test_files = sorted(str(p.relative_to(worktree)) for p in worktree.glob("**/*.test.js"))
+    if not test_files:
+        return None
+    proc = _run(["node", "--test", *test_files], worktree)
+    return _classify(proc.returncode, proc.stdout or proc.stderr, sandbox="subprocess")
+
+
+def combine_reports(python_report: TestReport, js_report: TestReport | None) -> TestReport:
+    """Both runners must pass; either failing fails the gate; two empty
+    surfaces stay no_tests."""
+    if js_report is None:
+        return python_report
+    if python_report.status == "no_tests":
+        merged = js_report
+    elif js_report.status in ("failed", "error"):
+        merged = js_report
+    elif python_report.status in ("failed", "error"):
+        merged = python_report
+    else:
+        merged = python_report
+    merged.summary = (
+        f"py: {python_report.summary or python_report.status} · "
+        f"js: {js_report.summary or js_report.status}"
+    )
+    return merged
 
 
 def _pytest_in_docker(worktree: Path) -> TestReport:

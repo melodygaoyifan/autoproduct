@@ -619,13 +619,16 @@ def preview(
             "Open this directory in WeChat DevTools (import project) to preview."
         )
         return
+    from autoproduct.upstream.provisioning import preview_env
+
     for entry in ("app/main.py", "main.py", "app.py"):
         candidate = root / entry
         if candidate.exists():
             console.print(f"starting {entry} — http://127.0.0.1:{port}  (Ctrl-C stops)")
             subprocess.run(
                 [sys.executable, str(candidate)],
-                cwd=root, env={**__import__("os").environ, "PORT": str(port)},
+                cwd=root,
+                env={**__import__("os").environ, "PORT": str(port), **preview_env(root)},
             )
             return
     console.print("[yellow]no runnable entry found (looked for app/main.py, main.py, app.py)[/yellow]")
@@ -690,6 +693,17 @@ def scr_approve(
         f"approved SCR-{number:03d} for spec {data['spec_slug']!r}: {data['reason']}\n"
         f"the next `autoproduct spec`/`add` touching it may now regenerate it once"
     )
+
+
+@app.command()
+def ship(repo_dir: str = typer.Option(".", help="Workspace directory")):
+    """Generate deployment artifacts + a plain-language DEPLOY.md. The
+    deploy button stays yours — the system never pushes to production."""
+    from autoproduct.upstream.ship import ship as run_ship
+
+    guide = run_ship(repo_dir)
+    console.print(f"部署指南已生成 / deploy guide written: {guide}")
+    console.print((guide.parent / "Dockerfile").exists() and "Dockerfile ready" or "")
 
 
 def main() -> None:

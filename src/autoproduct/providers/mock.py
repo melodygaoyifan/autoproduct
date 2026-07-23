@@ -101,7 +101,8 @@ class MockProvider(Provider):
                     # Echo test markers from the idea so downstream mock
                     # stages (planner) can key on them via the brief.
                     "problem": "Sharing long URLs is unwieldy."
-                    + (" make a cycle" if "make a cycle" in user else ""),
+                    + (" make a cycle" if "make a cycle" in user else "")
+                    + (" parallel plan" if "parallel plan" in user else ""),
                     "target_user": "Solo creators sharing links in chat.",
                     "hypotheses": [
                         {"statement": "Creators shorten >5 links/week", "evidence": "assumed"},
@@ -117,6 +118,21 @@ class MockProvider(Provider):
         if BRIEF_CRITIC_MARKER in system:
             return yaml.safe_dump({"issues": []})
         if PLANNER_MARKER in system:
+            if "parallel plan" in user:
+                return yaml.safe_dump(
+                    {"tasks": [
+                        {"id": "t1", "title": "API base", "description": "an item store (api)",
+                         "depends_on": [], "lane": "api", "estimate_hours": 3,
+                         "files_expected": ["feature_t1.py"]},
+                        {"id": "t2", "title": "UI base", "description": "an item store (ui)",
+                         "depends_on": [], "lane": "ui", "estimate_hours": 3,
+                         "files_expected": ["feature_t2.py"]},
+                        {"id": "t3", "title": "Wire together", "description": "an item store (wire)",
+                         "depends_on": ["t1", "t2"], "lane": "api", "estimate_hours": 2,
+                         "files_expected": ["feature_t3.py"]},
+                    ]},
+                    sort_keys=False,
+                )
             cyclic = "make a cycle" in user and "revision_feedback" not in user
             tasks = [
                 {"id": "t1", "title": "URL store", "description": "an item store for links",
