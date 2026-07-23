@@ -376,5 +376,105 @@ def serve(
     run_server(repo_dir, host=host, port=port)
 
 
+@app.command()
+def init(
+    directory: str = typer.Argument(..., help="Workspace directory to create"),
+    name: str = typer.Option(None, help="Project name (defaults to directory name)"),
+    profile: str = typer.Option(..., help="Domain profile: web | miniprogram | app"),
+):
+    """Create a greenfield workspace: profile constraints, CLAUDE.md, specs/."""
+    from autoproduct.upstream import init_workspace
+
+    root = init_workspace(directory, name or Path(directory).name, profile)
+    console.print(f"workspace ready: {root}")
+    console.print(
+        f"next: autoproduct spec \"<what you want to build>\" --repo-dir {root}"
+    )
+
+
+@app.command()
+def spec(
+    request: str = typer.Argument(..., help="What you want to build, in plain words"),
+    repo_dir: str = typer.Option(".", help="Workspace directory"),
+    provider: str = typer.Option("anthropic", help="Provider (e.g. 'mock')"),
+):
+    """Spec stage: EARS criteria + test skeletons, linted and critiqued."""
+    from autoproduct.upstream import run_spec_stage
+
+    result = run_spec_stage(repo_dir, request, provider=provider)
+    color = {"proposed": "green", "blocked": "red"}.get(result.status, "yellow")
+    console.print(
+        f"\n[bold {color}]{result.status}[/bold {color}] — {result.title} "
+        f"({len(result.criteria)} criteria, {result.revisions} revision(s))"
+    )
+    for i, criterion in enumerate(result.criteria):
+        console.print(f"  {i}. {criterion}")
+    if result.lint_issues:
+        console.print(f"[red]lint issues: {result.lint_issues}[/red]")
+    console.print(f"spec: {Path(repo_dir) / 'specs' / result.slug / 'spec.md'}")
+    if result.status == "proposed":
+        console.print(
+            f"Gate U3: autoproduct spec-approve {result.slug} --repo-dir {repo_dir}"
+        )
+
+
+@app.command("spec-approve")
+def spec_approve(
+    slug: str = typer.Argument(..., help="Spec slug"),
+    repo_dir: str = typer.Option(".", help="Workspace directory"),
+):
+    """Gate U3 — human approval that makes a spec buildable."""
+    from autoproduct.upstream import approve_spec
+
+    result = approve_spec(repo_dir, slug)
+    console.print(
+        f"approved: {result.title}\n"
+        f"next: autoproduct build {slug} --repo-dir {repo_dir}"
+    )
+
+
+@app.command()
+def build(
+    slug: str = typer.Argument(..., help="Approved spec slug"),
+    repo_dir: str = typer.Option(".", help="Workspace directory"),
+    provider: str = typer.Option("anthropic", help="Provider (e.g. 'mock')"),
+    review: bool = typer.Option(
+        True, help="Run the review pipeline on the built commit"
+    ),
+):
+    """Coding stage: test-first implementation of an approved spec; the
+    commit is handed to the review pipeline (Gate U4 -> Gate 1)."""
+    from autoproduct.upstream import run_build
+
+    result = run_build(repo_dir, slug, provider=provider)
+    color = {"built": "green"}.get(result.status, "red")
+    console.print(
+        f"\n[bold {color}]{result.status}[/bold {color}] — {result.iterations} "
+        f"iteration(s); {len(result.files_written)} file(s); {result.test_summary}"
+    )
+    if result.detail:
+        console.print(result.detail)
+    if result.status != "built":
+        raise typer.Exit(code=1)
+    console.print(f"commit {result.commit}: {', '.join(result.files_written)}")
+    if review:
+        console.print("\nhanding to review stage (autoproduct review HEAD~1)…")
+        review_result, state = run_review(
+            "HEAD~1",
+            repo_dir=repo_dir,
+            skills_dir=str(_DEFAULT_SKILLS),
+            provider_override=provider if provider == "mock" else None,
+        )
+        if review_result:
+            console.print(
+                f"review verdict: [bold]{review_result.verdict.value}[/bold] — "
+                f"{review_result.summary}"
+            )
+
+
 def main() -> None:
     sys.exit(app())
+
+
+if __name__ == "__main__":  # `python -m autoproduct.cli` — the server's
+    main()                  # detached workers run exactly this (PR #21 bug)

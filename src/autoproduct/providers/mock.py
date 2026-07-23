@@ -79,6 +79,25 @@ class MockProvider(Provider):
 
         if FIXPR_MARKER in system:
             return self._fixpr(user)
+        from autoproduct.upstream.build import IMPLEMENTER_MARKER
+        from autoproduct.upstream.spec import (
+            AMBIGUITY_CRITIC_MARKER,
+            SPECWRITER_MARKER,
+            TESTABILITY_CRITIC_MARKER,
+        )
+
+        if SPECWRITER_MARKER in system:
+            return self._spec(user)
+        if TESTABILITY_CRITIC_MARKER in system or AMBIGUITY_CRITIC_MARKER in system:
+            has_vague = "be fast" in user
+            issues = (
+                [{"severity": "major", "anchor": 0, "problem": "'fast' is untestable"}]
+                if has_vague
+                else []
+            )
+            return yaml.safe_dump({"issues": issues})
+        if IMPLEMENTER_MARKER in system:
+            return self._implement(user)
         from autoproduct.maintenance.skills_registry import SKILL_DRAFT_MARKER
 
         if SKILL_DRAFT_MARKER in system:
@@ -144,6 +163,73 @@ class MockProvider(Provider):
             for item in recurring[:2]
         ]
         return yaml.safe_dump({"proposals": proposals}, sort_keys=False)
+
+    def _spec(self, user: str) -> str:
+        """Canned item-store spec; emits a vague criterion on the first pass
+        when the request asks for it, clean once revision feedback arrives."""
+        vague_first_pass = "make it vague" in user and "revision_feedback" not in user
+        criteria = [
+            "When a client POSTs /items with a non-empty name, the system shall "
+            "store the item and return its integer id.",
+            "The system shall return all stored items, newest first, via GET /items.",
+        ]
+        if vague_first_pass:
+            criteria[0] = "The system shall be fast when adding items."
+        return yaml.safe_dump(
+            {
+                "title": "Item store API",
+                "design": "Single module `feature.py` with an in-memory ItemStore; "
+                "tests drive add() and list_items().",
+                "criteria": criteria,
+                "test_skeletons": [
+                    {
+                        "path": "tests/test_feature.py",
+                        "purpose": "add returns id; list returns newest first",
+                        "covers": [0, 1],
+                    }
+                ],
+            },
+            sort_keys=False,
+        )
+
+    def _implement(self, user: str) -> str:
+        return yaml.safe_dump(
+            {
+                "files": [
+                    {
+                        "path": "feature.py",
+                        "new_content": (
+                            "class ItemStore:\n"
+                            "    def __init__(self):\n"
+                            "        self._items = []\n\n"
+                            "    def add(self, name):\n"
+                            "        if not name:\n"
+                            "            raise ValueError('name required')\n"
+                            "        item_id = len(self._items) + 1\n"
+                            "        self._items.append({'id': item_id, 'name': name})\n"
+                            "        return item_id\n\n"
+                            "    def list_items(self):\n"
+                            "        return list(reversed(self._items))\n"
+                        ),
+                    },
+                    {
+                        "path": "tests/test_feature.py",
+                        "new_content": (
+                            "from feature import ItemStore\n\n\n"
+                            "def test_add_returns_id():\n"
+                            "    store = ItemStore()\n"
+                            "    assert store.add('a') == 1\n\n\n"
+                            "def test_list_newest_first():\n"
+                            "    store = ItemStore()\n"
+                            "    store.add('a'); store.add('b')\n"
+                            "    assert [i['name'] for i in store.list_items()] == ['b', 'a']\n"
+                        ),
+                    },
+                ],
+                "notes": "mock implementation",
+            },
+            sort_keys=False,
+        )
 
     def _fixpr(self, user: str) -> str:
         """Fix the planted `return a - b` bug in the provided file, else abstain."""
