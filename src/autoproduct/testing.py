@@ -151,12 +151,14 @@ def _classify(returncode: int, output: str, *, sandbox: str) -> TestReport:
     return TestReport(status="failed", summary=_last_line(tail), detail=tail, sandbox=sandbox)
 
 
-def _pytest_in_subprocess(worktree: Path) -> TestReport:
+def pytest_cmd(worktree: Path) -> list[str]:
     if (worktree / "uv.lock").exists() and shutil.which("uv"):
-        cmd = ["uv", "run", "--project", str(worktree), "pytest", "-q"]
-    else:
-        cmd = [sys.executable, "-m", "pytest", "-q"]
-    proc = _run(cmd, worktree)
+        return ["uv", "run", "--project", str(worktree), "pytest", "-q"]
+    return [sys.executable, "-m", "pytest", "-q"]
+
+
+def _pytest_in_subprocess(worktree: Path) -> TestReport:
+    proc = _run(pytest_cmd(worktree), worktree)
     return _classify(proc.returncode, proc.stdout or proc.stderr, sandbox="subprocess")
 
 

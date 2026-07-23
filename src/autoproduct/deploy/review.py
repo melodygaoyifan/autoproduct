@@ -193,14 +193,28 @@ def run_deploy_review(
     blocked = [o.voter for o in outputs if o.status is not VoterStatus.OK]
 
     verdict = decide(kept, blocked)
+
+    from autoproduct.deploy import track_record
+
+    track_record.record_review(repo_dir, review_id, verdict.value)
+    ready = track_record.readiness(
+        repo_dir, needed=int(policy.get("promotion_track_record", 10))
+    )
+    tier_note = ""
+    if policy["tier"] == "insight" and ready.eligible:
+        tier_note = (
+            f"; track record {ready.streak}/{ready.needed} correct PROMOTEs — "
+            "eligible for assistive tier (human edits .mas/deploy-policy.yaml)"
+        )
+
     result = DeployResult(
         verdict=verdict,
         tier=policy["tier"],
         summary=(
             f"{verdict.value} (tier: {policy['tier']}; recommendation only) — "
             f"{len(kept)} finding(s), {len(blocked)} blocked voter(s), "
-            f"{len(deploy_files)} deploy-relevant file(s), "
-            f"{time.monotonic() - started:.0f}s"
+            f"{len(deploy_files)} deploy-relevant file(s)"
+            f"{tier_note}, {time.monotonic() - started:.0f}s"
         ),
         findings=kept,
         blocked_voters=blocked,

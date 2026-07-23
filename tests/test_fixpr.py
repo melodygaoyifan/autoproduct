@@ -12,7 +12,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 BUGGY = "def add(a, b):\n    return a - b\n"
-TEST = "from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n"
+# The suite is GREEN on the buggy code — nothing covers add(), which is
+# exactly how the bug shipped. The regression test must be what fails.
+TEST = "def test_placeholder():\n    assert True\n"
 
 
 def _repo(tmp_path: Path, source=BUGGY) -> Path:
@@ -59,6 +61,58 @@ def test_fix_pr_creates_branch_with_passing_fix(tmp_path):
     assert "return a + b" in show.stdout
     # The user's checkout is untouched — the fix lived in a worktree.
     assert "return a - b" in (repo / "calc.py").read_text()
+    # Incident-to-test loop: the regression test reproduced the incident
+    # (failed pre-fix) and ships on the branch.
+    assert attempt.regression_test == "tests/test_regression_mock.py"
+    shipped = subprocess.run(
+        ["git", "show", f"{attempt.branch}:tests/test_regression_mock.py"],
+        cwd=repo, capture_output=True, text=True, check=True,
+    )
+    assert "test_add_regression" in shipped.stdout
+
+
+def test_regression_test_dropped_when_it_passes_prefix(tmp_path):
+    """A regression test that already passes on the buggy code does not
+    reproduce the incident — it must be dropped visibly, fix kept."""
+    import yaml as yaml_lib
+
+    from autoproduct.providers.base import Provider, register
+
+    @register
+    class UselessTestFixer(Provider):
+        name = "useless_test_fixer"
+
+        def chat(self, *, model, system, messages, max_tokens=4096):
+            return yaml_lib.safe_dump(
+                {
+                    "files": [
+                        {
+                            "path": "calc.py",
+                            "new_content": "def add(a, b):\n    return a + b\n",
+                        }
+                    ],
+                    "regression_test": {
+                        "path": "tests/test_regression_useless.py",
+                        "new_content": "def test_nothing():\n    assert True\n",
+                    },
+                    "commit_message": "fix",
+                    "abstain_reason": None,
+                },
+                sort_keys=False,
+            )
+
+    repo = _repo(tmp_path)
+    attempt = generate_fix_pr(
+        INCIDENT, ROOT_CAUSE, repo_dir=str(repo), provider="useless_test_fixer"
+    )
+    assert attempt.status == "branch_only"  # fix still ships
+    assert attempt.regression_test is None
+    assert "does not reproduce" in attempt.regression_note
+    shipped = subprocess.run(
+        ["git", "show", f"{attempt.branch}:tests/test_regression_useless.py"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    assert shipped.returncode != 0  # dropped test never committed
 
 
 def test_fix_abandoned_when_tests_still_fail(tmp_path):

@@ -156,6 +156,11 @@ class MockProvider(Provider):
         return yaml.safe_dump(
             {
                 "files": [{"path": match.group(1), "new_content": fixed + "\n"}],
+                "regression_test": {
+                    "path": "tests/test_regression_mock.py",
+                    "new_content": "from calc import add\n\n"
+                    "def test_add_regression():\n    assert add(1, 2) == 3\n",
+                },
                 "commit_message": "fix: restore addition in add()",
                 "abstain_reason": None,
             },
