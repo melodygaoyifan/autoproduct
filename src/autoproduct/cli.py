@@ -460,7 +460,7 @@ def build(
     if review:
         console.print("\nhanding to review stage (autoproduct review HEAD~1)…")
         review_result, state = run_review(
-            "HEAD~1",
+            "HEAD~1..HEAD",
             repo_dir=repo_dir,
             skills_dir=str(_DEFAULT_SKILLS),
             provider_override=provider if provider == "mock" else None,
@@ -704,6 +704,42 @@ def ship(repo_dir: str = typer.Option(".", help="Workspace directory")):
     guide = run_ship(repo_dir)
     console.print(f"部署指南已生成 / deploy guide written: {guide}")
     console.print((guide.parent / "Dockerfile").exists() and "Dockerfile ready" or "")
+
+
+@app.command("product-bench")
+def product_bench(
+    cases_dir: str = typer.Option(
+        str(Path(__file__).resolve().parent.parent.parent / "benchmarks" / "products"),
+        help="Labeled product cases (FDR + independent behavioral probes)",
+    ),
+    provider: str = typer.Option(None, help="Provider (e.g. 'mock')"),
+    limit: int = typer.Option(None, help="Run only the first N cases"),
+    repo_dir: str = typer.Option(".", help="Where to record the result"),
+):
+    """Built-product quality, end to end: full autopilot per case, then
+    INDEPENDENT probes against the built product (WebGen-Bench pattern)."""
+    from autoproduct.product_bench import run_product_bench, save_summary
+
+    summary = run_product_bench(cases_dir, provider=provider, limit=limit)
+    table = Table(title="product bench")
+    for col in ("case", "autopilot", "built", "probes passed", "clean reviews", "s"):
+        table.add_column(col)
+    for c in summary.cases:
+        table.add_row(
+            c.name,
+            c.autopilot_status,
+            f"{c.tasks_built}/{c.tasks_total}",
+            f"{sum(1 for p in c.probes if p.passed)}/{len(c.probes)}",
+            f"{c.clean_reviews}/{c.tasks_built}",
+            str(c.duration_s),
+        )
+    console.print(table)
+    console.print(
+        f"build rate [bold]{summary.build_rate:.0%}[/bold] · "
+        f"probe pass [bold]{summary.probe_pass_rate:.0%}[/bold] · "
+        f"clean reviews [bold]{summary.clean_review_rate:.0%}[/bold]"
+    )
+    console.print(f"saved: {save_summary(summary, repo_dir)}")
 
 
 def main() -> None:

@@ -1,0 +1,19 @@
+profile: web
+fdr: 团长发起接龙，住户下单，团长看汇总。必须有：发起、下单、汇总。成功：一周10个团长。
+probes:
+- name: store-add-list
+  script: "\nimport glob, importlib, sys\nmodules = sorted(glob.glob(\"feature_*.py\"\
+    )) or [\"feature.py\"]\nok = False\nfor m in modules:\n    mod = importlib.import_module(m[:-3])\n\
+    \    if hasattr(mod, \"ItemStore\"):\n        store = mod.ItemStore()\n      \
+    \  item_id = store.add(\"面包\")\n        assert isinstance(item_id, int) and item_id\
+    \ >= 1, \"add must return an id\"\n        store.add(\"牛奶\")\n        names =\
+    \ [i[\"name\"] for i in store.list_items()]\n        assert names[0] == \"牛奶\"\
+    , \"list must be newest first\"\n        ok = True\nassert ok, \"no module exposed\
+    \ ItemStore\"\nprint(\"store behavior ok\")\n"
+- name: empty-name-rejected
+  script: "\nimport glob, importlib\nmodules = sorted(glob.glob(\"feature_*.py\"))\
+    \ or [\"feature.py\"]\nmod = importlib.import_module(modules[0][:-3])\nstore =\
+    \ mod.ItemStore()\ntry:\n    store.add(\"\")\nexcept Exception:\n    print(\"\
+    empty name rejected\")\nelse:\n    raise SystemExit(\"empty name must be rejected\"\
+    )\n"
+name: 01-item-store
