@@ -68,3 +68,10 @@ supervisor from the design docs — not included yet.
 Provider keys live in the environment only. If a key may have leaked,
 rotate it at the provider console and update `~/.zshrc` (or your secret
 store); nothing under `.mas/` or git should ever contain one.
+
+## Quick-tunnel webhook (dogfood setup)
+
+For laptop-grade operation: `cloudflared tunnel --url http://localhost:8422`
+gives an ephemeral public URL; register it as the repo webhook (pull_request
+events, JSON, the AUTOPRODUCT_WEBHOOK_SECRET value). The tunnel URL changes
+on every restart — update the webhook config when it does.
