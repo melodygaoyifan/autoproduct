@@ -209,8 +209,11 @@ def compound(
         cwd=repo_dir, capture_output=True, text=True,
     )
     output = (created.stdout or created.stderr).strip()
-    console.print(output.splitlines()[-1] if output else "(no gh output)")
     git("checkout", "-")
+    if created.returncode != 0:
+        console.print(f"[yellow]gh pr create failed: {output[:200]}[/yellow]")
+        raise typer.Exit(code=1)
+    console.print(output.splitlines()[-1] if output else "(no gh output)")
 
 
 def main() -> None:
