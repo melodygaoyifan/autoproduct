@@ -1,0 +1,16 @@
+name: miniprogram
+description: WeChat 小程序
+constraints:
+  - Main package stays under the 2MB limit; anything non-critical goes in subpackages with lazy loading.
+  - Every network request targets a domain that must appear on the request-domain whitelist (request 合法域名) — enumerate them in the spec; no IP literals, HTTPS only.
+  - User privacy — getUserProfile/位置/相机 permissions are requested lazily, at the moment of use, with the purpose declared in the privacy agreement (隐私协议).
+  - setData payloads stay small and shallow; never setData in a tight loop.
+  - Follow WeChat review guidelines — no hidden features, no external payment bypass, content categories must match the registered 类目.
+spec_extras:
+  - List every remote domain the feature calls (goes to the whitelist request).
+  - Note any new permission (授权 scope) the feature needs and when it is requested.
+  - State the page/subpackage placement and its size impact.
+checks:
+  - package size budget (deterministic)
+  - domain whitelist extraction (deterministic)
+stack_hint: Native 小程序 (WXML/WXSS/JS) unless the brief demands a framework (Taro/uni-app).

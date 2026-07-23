@@ -1,0 +1,13 @@
+name: app
+description: Mobile application
+constraints:
+  - Every user flow has a Maestro-style flow test skeleton before implementation starts.
+  - Offline and poor-network behavior is specified per feature, not assumed.
+  - Store review rules are constraints — permissions justified at request time, no undocumented data collection, sign-in-with-platform rules honored.
+  - Battery/network discipline — no polling where push or on-demand fetch works.
+spec_extras:
+  - Name the device tiers/OS versions each criterion must hold on.
+  - Note any new OS permission and its just-in-time request point.
+checks:
+  - maestro flows (availability-gated)
+stack_hint: Cross-platform (React Native/Flutter) unless the brief demands native.

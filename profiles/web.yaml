@@ -1,0 +1,14 @@
+name: web
+description: Web application (frontend + API)
+constraints:
+  - Every state-changing endpoint has CSRF protection and an auth check; every outbound fetch of a user-supplied URL goes through an allowlist.
+  - Core Web Vitals budgets are part of done — no unbounded bundles, no layout shift from late-loading content.
+  - Every user-facing flow has a Playwright-style E2E test skeleton before implementation starts.
+  - Accessibility is not optional — interactive elements are keyboard-reachable and labeled.
+spec_extras:
+  - For each user-facing criterion, name the E2E flow that proves it.
+  - State the API contract (method, path, request/response shape) for every endpoint the feature adds.
+checks:
+  - playwright (availability-gated)
+  - lighthouse budgets (availability-gated)
+stack_hint: Keep the stack boring unless the brief demands otherwise (e.g. FastAPI/Flask + vanilla or React frontend).
