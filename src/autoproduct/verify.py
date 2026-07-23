@@ -8,11 +8,10 @@ originating voter (§08.1.5 channel table).
 
 from __future__ import annotations
 
-import yaml
-
 from autoproduct.harness.spec_validator import LoadedSkill, VoterSpec
 from autoproduct.providers import ProviderError, get_provider
 from autoproduct.state import VoterFinding
+from autoproduct.yamlx import extract_mapping
 
 VERIFIER_MARKER = "independent verification agent"
 
@@ -73,7 +72,7 @@ def verify_finding(
             raw = get_provider(provider_name).complete(
                 model=model_name, system=_SYSTEM, user=user, max_tokens=512
             )
-            data = yaml.safe_load(raw.strip().strip("`"))
+            data = extract_mapping(raw, ("verdict",))
             verdict = str(data.get("verdict", "")).strip()
             if verdict in _VALID:
                 return verdict
