@@ -164,7 +164,17 @@ def run_spec_stage(
             + (f"\n\n<revision_feedback>\n{feedback}\n</revision_feedback>" if feedback else ""),
             max_tokens=4096,
         )
-        spec_data = extract_mapping(raw, ("criteria", "title"))
+        try:
+            spec_data = extract_mapping(raw, ("criteria", "title"))
+        except ValueError:
+            feedback = (
+                "Your previous response was not a parseable YAML mapping. "
+                "Respond with ONLY the YAML schema given, and double-quote "
+                "every string value."
+            )
+            spec_data = {}
+            lint, critics = [], []
+            continue
         lint = ears.lint_criteria([str(c) for c in spec_data.get("criteria", [])])
         gaps = _coverage_gaps(spec_data)
         critics = _critique(provider_impl, critic_model, "testability", spec_data)
@@ -184,7 +194,8 @@ def run_spec_stage(
         pass
 
     gaps = _coverage_gaps(spec_data)
-    status = "proposed" if not lint and not gaps else "blocked"
+    has_criteria = bool(spec_data.get("criteria"))
+    status = "proposed" if has_criteria and not lint and not gaps else "blocked"
     slug = _slugify(str(spec_data.get("title") or request))
     spec = Spec(
         slug=slug,

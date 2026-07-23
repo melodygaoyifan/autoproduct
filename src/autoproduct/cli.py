@@ -472,6 +472,65 @@ def build(
             )
 
 
+@app.command()
+def discover(
+    idea: str = typer.Argument(..., help="Your product idea, in plain words"),
+    repo_dir: str = typer.Option(".", help="Workspace directory"),
+    provider: str = typer.Option("anthropic", help="Provider (e.g. 'mock')"),
+):
+    """Discovery stage: evidence-tagged ProductBrief + hypothesis ledger."""
+    from autoproduct.upstream import run_discovery
+
+    brief = run_discovery(repo_dir, idea, provider=provider)
+    console.print(f"\n[bold]{brief.title}[/bold] — {brief.status}")
+    for h in brief.hypotheses:
+        console.print(f"  ({h.evidence}) {h.statement}")
+    console.print(f"scope_now: {brief.scope_now}")
+    console.print(f"brief: {Path(repo_dir) / 'product' / 'brief.md'}")
+    console.print("Gate U1: autoproduct brief-approve")
+
+
+@app.command("brief-approve")
+def brief_approve(repo_dir: str = typer.Option(".", help="Workspace directory")):
+    """Gate U1 — the human problem-selection decision."""
+    from autoproduct.upstream import approve_brief
+
+    brief = approve_brief(repo_dir)
+    console.print(f"approved: {brief.title}\nnext: autoproduct plan")
+
+
+@app.command()
+def plan(
+    repo_dir: str = typer.Option(".", help="Workspace directory"),
+    provider: str = typer.Option("anthropic", help="Provider (e.g. 'mock')"),
+):
+    """Planning stage: task DAG from the approved brief (dag-checked)."""
+    from autoproduct.upstream import run_planning
+
+    result = run_planning(repo_dir, provider=provider)
+    color = {"proposed": "green", "blocked": "red"}.get(result.status, "yellow")
+    console.print(f"\n[bold {color}]{result.status}[/bold {color}] — {len(result.tasks)} task(s)")
+    for t in result.tasks:
+        deps = f" <- {','.join(t.depends_on)}" if t.depends_on else ""
+        console.print(f"  {t.id} [{t.lane}] {t.title}{deps} ({t.estimate_hours}h)")
+    if result.dag_issues:
+        console.print(f"[red]dag issues: {result.dag_issues}[/red]")
+    if result.status == "proposed":
+        console.print("Gate U2 (scope lock): autoproduct plan-approve")
+
+
+@app.command("plan-approve")
+def plan_approve(repo_dir: str = typer.Option(".", help="Workspace directory")):
+    """Gate U2 — lock scope; changes after this go through an SCR."""
+    from autoproduct.upstream import approve_plan, next_tasks
+
+    plan_result = approve_plan(repo_dir)
+    ready = next_tasks(repo_dir)
+    console.print(f"scope locked: {len(plan_result.tasks)} task(s)")
+    for t in ready:
+        console.print(f"  ready: {t.id} — autoproduct spec \"{t.description}\"")
+
+
 def main() -> None:
     sys.exit(app())
 

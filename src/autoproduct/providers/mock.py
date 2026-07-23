@@ -79,6 +79,44 @@ class MockProvider(Provider):
 
         if FIXPR_MARKER in system:
             return self._fixpr(user)
+        from autoproduct.upstream.discover import BRIEF_CRITIC_MARKER, BRIEFWRITER_MARKER
+        from autoproduct.upstream.plan import PLAN_CRITIC_MARKER, PLANNER_MARKER
+
+        if BRIEFWRITER_MARKER in system:
+            return yaml.safe_dump(
+                {
+                    "title": "Link sharing tool",
+                    # Echo test markers from the idea so downstream mock
+                    # stages (planner) can key on them via the brief.
+                    "problem": "Sharing long URLs is unwieldy."
+                    + (" make a cycle" if "make a cycle" in user else ""),
+                    "target_user": "Solo creators sharing links in chat.",
+                    "hypotheses": [
+                        {"statement": "Creators shorten >5 links/week", "evidence": "assumed"},
+                        {"statement": "Click counts drive retention", "evidence": "sourced"},
+                    ],
+                    "scope_now": ["shorten a URL", "count clicks"],
+                    "scope_later": ["custom domains"],
+                    "scope_never": ["ads"],
+                    "success_metrics": ["100 links created in week 1"],
+                },
+                sort_keys=False,
+            )
+        if BRIEF_CRITIC_MARKER in system:
+            return yaml.safe_dump({"issues": []})
+        if PLANNER_MARKER in system:
+            cyclic = "make a cycle" in user and "revision_feedback" not in user
+            tasks = [
+                {"id": "t1", "title": "URL store", "description": "an item store for links",
+                 "depends_on": ["t2"] if cyclic else [], "lane": "api", "estimate_hours": 4},
+                {"id": "t2", "title": "Shorten endpoint", "description": "POST /links",
+                 "depends_on": ["t1"], "lane": "api", "estimate_hours": 4},
+                {"id": "t3", "title": "Click counting", "description": "count redirects",
+                 "depends_on": ["t2"], "lane": "api", "estimate_hours": 3},
+            ]
+            return yaml.safe_dump({"tasks": tasks}, sort_keys=False)
+        if PLAN_CRITIC_MARKER in system:
+            return yaml.safe_dump({"issues": []})
         from autoproduct.upstream.build import IMPLEMENTER_MARKER
         from autoproduct.upstream.spec import (
             AMBIGUITY_CRITIC_MARKER,
