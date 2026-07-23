@@ -155,7 +155,8 @@ def run_autopilot(
         auto_approvals.append(
             f"Gate U3 ({spec.slug}): auto — ears_lint + coverage passed"
         )
-        built = run_build(root, spec.slug, provider=provider, model=model)
+        built = run_build(root, spec.slug, provider=provider, model=model,
+                          task_lane=task.lane, task_estimate_hours=task.estimate_hours)
         verdict = None
         detail = built.detail
         if built.status == "built":
@@ -367,6 +368,11 @@ def run_feature(
     )
     data = extract_mapping(raw, ("tasks",))
     tasks = [Task.model_validate(t) for t in data.get("tasks", [])]
+    for task in tasks:
+        if not task.files_expected:
+            task.files_expected = blast_radius(
+                root, f"{task.title} {task.description}", cap=3
+            )
     issues = dag_check(tasks)
     if issues:
         return AutopilotResult(status="failed", assessment=assessment,
@@ -405,7 +411,8 @@ def run_feature(
             continue
         approve_spec(root, spec.slug)
         auto_approvals.append(f"Gate U3 ({spec.slug}): auto — ears_lint + coverage passed")
-        built = run_build(root, spec.slug, provider=provider, model=model)
+        built = run_build(root, spec.slug, provider=provider, model=model,
+                          task_lane=task.lane, task_estimate_hours=task.estimate_hours)
         verdict = None
         if built.status == "built":
             review = _review_head(root, provider)
@@ -478,7 +485,8 @@ def _build_wave_parallel(root, wave, *, provider, model, auto_approvals):
     def build_one(item):
         task, spec_slug = item
         return task, run_build(
-            root, spec_slug, provider=provider, model=model, in_branch=True
+            root, spec_slug, provider=provider, model=model, in_branch=True,
+            task_lane=task.lane, task_estimate_hours=task.estimate_hours,
         )
 
     prepared = []

@@ -23,8 +23,23 @@ def _no_docker(monkeypatch):
 
 def test_cases_load():
     cases = load_cases(CASES)
-    assert len(cases) == 3
+    assert len(cases) == 5
     assert all(c.probes for c in cases)
+
+
+def test_feature_add_case_accretes_modules():
+    case = next(c for c in load_cases(CASES) if c.name == "04-feature-add")
+    result = run_case(case, provider="mock")
+    assert result.autopilot_status == "completed"
+    assert result.tasks_total == 6  # 3 base + 3 feature tasks
+    assert result.probe_pass_rate == 1.0, [p.model_dump() for p in result.probes]
+
+
+def test_miniprogram_profile_case():
+    case = next(c for c in load_cases(CASES) if c.name == "05-miniprogram-profile")
+    result = run_case(case, provider="mock")
+    assert result.autopilot_status == "completed"
+    assert result.probe_pass_rate == 1.0
 
 
 def test_probes_pass_against_mock_built_product():

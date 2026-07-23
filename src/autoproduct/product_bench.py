@@ -46,6 +46,10 @@ class ProductCase(BaseModel):
     name: str
     profile: str = "web"
     fdr: str
+    feature_fdrs: list[str] = Field(
+        default_factory=list,
+        description="granular follow-up FDRs applied via the feature flow",
+    )
     probes: list[Probe] = Field(min_length=1)
 
 
@@ -98,6 +102,40 @@ def load_cases(cases_dir: str | Path) -> list[ProductCase]:
     return cases
 
 
+def workspace_python(workspace: Path) -> str:
+    """Environment parity: if the built product declares dependencies,
+    probes (and the product they boot) run in an isolated env built from
+    the product's OWN requirements — a framework outside autoproduct's
+    venv must not read as a product failure."""
+    import shutil
+
+    requirements = workspace / "requirements.txt"
+    if not requirements.exists() or not shutil.which("uv"):
+        return sys.executable
+    real_deps = [
+        line.strip()
+        for line in requirements.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    if not real_deps:
+        return sys.executable
+    venv_python = workspace / ".probe-venv" / "bin" / "python"
+    if venv_python.exists():
+        return str(venv_python)
+    created = subprocess.run(
+        ["uv", "venv", str(workspace / ".probe-venv")],
+        capture_output=True, text=True, timeout=120,
+    )
+    if created.returncode != 0:
+        return sys.executable
+    installed = subprocess.run(
+        ["uv", "pip", "install", "-r", str(requirements),
+         "--python", str(venv_python)],
+        capture_output=True, text=True, timeout=300,
+    )
+    return str(venv_python) if installed.returncode == 0 else sys.executable
+
+
 def run_probe(workspace: Path, probe: Probe) -> ProbeResult:
     """The probe runs IN the built workspace with the product's runtime
     env — it observes the product from outside, like a user's script."""
@@ -110,7 +148,7 @@ def run_probe(workspace: Path, probe: Probe) -> ProbeResult:
         probe_path = handle.name
     try:
         proc = subprocess.run(
-            [sys.executable, probe_path],
+            [workspace_python(workspace), probe_path],
             cwd=workspace,
             capture_output=True,
             text=True,
@@ -142,6 +180,23 @@ def run_case(case: ProductCase, *, provider: str | None = None) -> CaseResult:
             provider=provider or "anthropic",
             yes=True,
         )
+        all_outcomes = list(result.outcomes)
+        statuses = [result.status]
+        if result.status == "completed" and case.feature_fdrs:
+            from autoproduct.upstream.autopilot import run_feature
+
+            for i, feature_fdr in enumerate(case.feature_fdrs):
+                fdr_path = workspace / f".bench-feature-{i}.md"
+                fdr_path.write_text(feature_fdr, encoding="utf-8")
+                feature_result = run_feature(
+                    workspace, fdr_path, provider=provider or "anthropic", yes=True
+                )
+                statuses.append(feature_result.status)
+                all_outcomes += feature_result.outcomes
+            result.outcomes = all_outcomes
+            if any(s != "completed" for s in statuses):
+                result.status = "failed"
+
         built = [o for o in result.outcomes if o.status == "built"]
         clean = [
             o for o in built

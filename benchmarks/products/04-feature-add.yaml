@@ -1,0 +1,35 @@
+profile: web
+fdr: 团长发起接龙，住户下单，团长看汇总。必须有：发起、下单、汇总。
+feature_fdrs:
+- 给接龙加一个功能：住户可以取消自己的订单。必须有：取消入口。
+probes:
+- name: feature-modules-accrete
+  script: '
+
+    import glob
+
+    modules = glob.glob("feature_*.py")
+
+    assert len(modules) >= 4, f"expected base (3 modules) + feature additions, got
+    {modules}"
+
+    print(f"{len(modules)} feature modules present")
+
+    '
+- name: store-still-works
+  script: '
+
+    import glob, importlib
+
+    modules = sorted(glob.glob("feature_*.py")) or ["feature.py"]
+
+    mod = importlib.import_module(modules[0][:-3])
+
+    store = mod.ItemStore()
+
+    assert store.add("a") == 1
+
+    print("store ok")
+
+    '
+name: 04-feature-add

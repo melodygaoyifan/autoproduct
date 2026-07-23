@@ -217,6 +217,15 @@ def create_app(repo_dir: str = ".", *, spawn=_spawn) -> FastAPI:
 
 
 def serve(repo_dir: str = ".", host: str = "127.0.0.1", port: int = 8422) -> None:
+    import threading
+
     import uvicorn
 
+    def _recover():
+        from autoproduct.orchestrator import recover_reviews
+
+        for r in recover_reviews(repo_dir):
+            print(f"[recover] {r['review_id']}: {r['status']}")
+
+    threading.Thread(target=_recover, daemon=True).start()
     uvicorn.run(create_app(repo_dir), host=host, port=port, log_level="info")
