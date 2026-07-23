@@ -1,0 +1,29 @@
+[project]
+name = "autoproduct"
+version = "0.0.1"
+description = "Multi-agent review-side SDLC system (implementation of design docs 08-17)"
+readme = "README.md"
+authors = [
+    { name = "melodygaoyifan", email = "168382010+melodygaoyifan@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.118.0",
+    "langgraph>=1.0,<2",
+    "pydantic>=2",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+    "typer>=0.27.0",
+]
+
+[project.scripts]
+autoproduct = "autoproduct.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9.28,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

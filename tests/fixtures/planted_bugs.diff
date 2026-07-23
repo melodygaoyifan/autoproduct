@@ -1,0 +1,14 @@
+diff --git a/app/orders.py b/app/orders.py
+index 1111111..2222222 100644
+--- a/app/orders.py
++++ b/app/orders.py
+@@ -10,6 +10,14 @@ def get_order(order_id):
+     return db.fetch_one(f"SELECT * FROM orders WHERE id = {order_id}")
++
++def cancel_order(order_id):
++    try:
++        db.execute("UPDATE orders SET status = 'cancelled'")
++    except Exception: pass
++
++def compute_total(items):
++    return eval(request.args.get("formula"))
