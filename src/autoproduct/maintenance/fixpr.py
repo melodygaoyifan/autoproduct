@@ -42,11 +42,20 @@ Rules:
 - If the hypothesis cannot be fixed within the provided files, return an
   empty files list and say why in `abstain_reason`.
 
+Also write ONE regression test that reproduces the incident: it must FAIL
+against the current (buggy) code and PASS after your fix. Place it under
+tests/ with a name like tests/test_regression_<incident_id>.py. If the
+incident cannot be reproduced by a unit test, set regression_test to null.
+
 Respond with ONLY YAML:
 files:
   - path: ...
     new_content: |
       ...
+regression_test:
+  path: tests/test_regression_x.py
+  new_content: |
+    ...
 commit_message: one line
 abstain_reason: null or one sentence
 """
@@ -58,6 +67,8 @@ class FixAttempt(BaseModel):
     pr_url: str | None = None
     detail: str = ""
     files_changed: list[str] = Field(default_factory=list)
+    regression_test: str | None = None  # path, when the test reproduced the incident
+    regression_note: str = ""
 
 
 def _gather_sources(repo: Path, root_cause: RootCauseResult) -> dict[str, str]:
@@ -124,6 +135,30 @@ def generate_fix_pr(
         )
         if added.returncode != 0:
             return FixAttempt(status="error", detail=added.stderr[:300])
+
+        # Incident-to-test loop (§09.12): the regression test must FAIL
+        # against the buggy code before it's trusted — a test that passes
+        # pre-fix doesn't reproduce the incident and is dropped, visibly.
+        regression = data.get("regression_test") or None
+        regression_path, regression_note = None, ""
+        if regression and str(regression.get("path", "")).startswith("tests/"):
+            test_path = worktree / regression["path"]
+            test_path.parent.mkdir(parents=True, exist_ok=True)
+            test_path.write_text(str(regression["new_content"]), encoding="utf-8")
+            from autoproduct.testing import pytest_cmd
+
+            probe = _run([*pytest_cmd(worktree), regression["path"]], worktree)
+            if probe.returncode == 0:
+                test_path.unlink()
+                regression_note = (
+                    "regression test dropped: it passed against the buggy code, "
+                    "so it does not reproduce the incident"
+                )
+            else:
+                regression_path = regression["path"]
+        elif regression:
+            regression_note = "regression test dropped: path not under tests/"
+
         for f in files:
             (worktree / f["path"]).write_text(f["new_content"], encoding="utf-8")
 
@@ -139,6 +174,7 @@ def generate_fix_pr(
                 status="tests_failed",
                 detail=f"fix abandoned, suite {report.status}: {report.summary}",
                 files_changed=[f["path"] for f in files],
+                regression_note=regression_note,
             )
 
         message = str(data.get("commit_message") or f"fix: {incident.title[:60]}")
@@ -159,15 +195,22 @@ def generate_fix_pr(
                 branch=branch,
                 detail=f"local branch created; push failed ({pushed.stderr.strip()[:120]})",
                 files_changed=[f["path"] for f in files],
+                regression_test=regression_path,
+                regression_note=regression_note,
             )
+        regression_line = (
+            f"\n\n**Regression test**: `{regression_path}` (fails pre-fix, passes post-fix)."
+            if regression_path
+            else ""
+        )
         ok, output = github._gh(
             ["pr", "create", "--head", branch,
              "--title", f"[autoproduct fix] {incident.title[:80]}",
              "--body",
              f"Automated fix proposal for incident `{incident.id}`.\n\n"
              f"**Hypothesis** ({root_cause.confidence}% confidence): "
-             f"{root_cause.hypothesis}\n\nSuite passed in the fix worktree. "
-             "This PR re-enters code review like any other.\n\n"
+             f"{root_cause.hypothesis}\n\nSuite passed in the fix worktree."
+             f"{regression_line}\n\nThis PR re-enters code review like any other.\n\n"
              "🤖 Generated with [Claude Code](https://claude.com/claude-code)"],
             cwd=str(repo),
         )
@@ -177,6 +220,8 @@ def generate_fix_pr(
             pr_url=output.splitlines()[-1].strip() if ok else None,
             detail="" if ok else f"branch pushed; gh pr create failed: {output[:120]}",
             files_changed=[f["path"] for f in files],
+            regression_test=regression_path,
+            regression_note=regression_note,
         )
     finally:
         _run(["git", "worktree", "remove", "--force", str(worktree)], repo)

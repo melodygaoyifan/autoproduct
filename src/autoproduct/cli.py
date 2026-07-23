@@ -343,5 +343,25 @@ def triage(
         raise typer.Exit(code=3)
 
 
+@app.command("deploy-outcome")
+def deploy_outcome(
+    review_id: str = typer.Argument(..., help="Deploy review ID"),
+    outcome: str = typer.Option(..., help="'correct' or 'incorrect'"),
+    repo_dir: str = typer.Option(".", help="Repository the review ran in"),
+):
+    """Record the human verdict on a past deploy recommendation (§09.11.5).
+    Streaks of correct PROMOTEs make the stage eligible for assistive tier."""
+    from autoproduct.deploy import track_record
+
+    if not track_record.mark_outcome(repo_dir, review_id, outcome):
+        console.print(f"[red]no deploy review {review_id!r} on record[/red]")
+        raise typer.Exit(code=1)
+    ready = track_record.readiness(repo_dir)
+    console.print(
+        f"recorded. streak: {ready.streak}/{ready.needed} correct PROMOTEs"
+        + (" — [bold]eligible for assistive tier[/bold]" if ready.eligible else "")
+    )
+
+
 def main() -> None:
     sys.exit(app())
