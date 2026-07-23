@@ -531,6 +531,55 @@ def plan_approve(repo_dir: str = typer.Option(".", help="Workspace directory")):
         console.print(f"  ready: {t.id} — autoproduct spec \"{t.description}\"")
 
 
+@app.command()
+def create(
+    directory: str = typer.Argument(..., help="Where your product lives (created if new)"),
+    profile: str = typer.Option(..., help="web | miniprogram | app"),
+    fdr: str = typer.Option(None, help="Your FDR file (default: <dir>/FDR.md)"),
+    yes: bool = typer.Option(False, "--yes", help="Confirm the plan and build everything"),
+    provider: str = typer.Option("anthropic", help="Provider (e.g. 'mock')"),
+):
+    """The non-technical flow: write ONE document (the FDR), the system
+    builds the product. First run writes the FDR template + guide."""
+    from autoproduct.upstream import init_workspace
+    from autoproduct.upstream.autopilot import run_autopilot
+    from autoproduct.upstream.fdr import write_template
+
+    root = Path(directory).resolve()
+    if not (root / ".mas" / "project.yaml").exists():
+        init_workspace(root, root.name, profile)
+    fdr_path = Path(fdr) if fdr else root / "FDR.md"
+    if not fdr_path.exists() or not fdr_path.read_text(encoding="utf-8").strip():
+        write_template(root)
+        console.print(
+            f"第一步：用自己的话填写 {root / 'FDR.md'}（参考 {root / 'FDR-GUIDE.md'}），"
+            f"然后重新运行这条命令。\n"
+            f"Step 1: fill in {root / 'FDR.md'} in your own words (see FDR-GUIDE.md), "
+            f"then run this command again."
+        )
+        return
+
+    result = run_autopilot(root, fdr_path, provider=provider, yes=yes)
+    if result.status == "needs_answers":
+        console.print("[yellow]还需要一些信息 / A few answers needed:[/yellow]")
+        for i, q in enumerate(result.assessment.questions, 1):
+            console.print(f"  {i}. {q}")
+        console.print(f"详见 {root / 'FDR-QUESTIONS.md'} — 补充进 FDR.md 后重新运行。")
+        raise typer.Exit(code=2)
+    if result.status == "awaiting_confirmation":
+        console.print(result.confirmation)
+        console.print(f"\n(saved to {root / 'product' / 'CONFIRMATION.md'})")
+        raise typer.Exit(code=0)
+    color = "green" if result.status == "completed" else "red"
+    console.print(f"\n[bold {color}]{result.status}[/bold {color}]")
+    for o in result.outcomes:
+        verdict = f" · review: {o.review_verdict}" if o.review_verdict else ""
+        console.print(f"  {o.task_id} {o.title}: {o.status}{verdict}")
+    console.print(f"报告 / report: {result.report_path}")
+    if result.status != "completed":
+        raise typer.Exit(code=1)
+
+
 def main() -> None:
     sys.exit(app())
 

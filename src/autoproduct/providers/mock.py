@@ -79,6 +79,18 @@ class MockProvider(Provider):
 
         if FIXPR_MARKER in system:
             return self._fixpr(user)
+        from autoproduct.upstream.autopilot import REPORTER_MARKER
+        from autoproduct.upstream.fdr import FDR_ASSESSOR_MARKER
+
+        if FDR_ASSESSOR_MARKER in system:
+            if "just an idea" in user:
+                return yaml.safe_dump(
+                    {"ready": False, "summary": "需要更多信息",
+                     "questions": ["谁会用它？", "用户具体做什么？"]}
+                )
+            return yaml.safe_dump({"ready": True, "summary": "可以开始构建", "questions": []})
+        if REPORTER_MARKER in system:
+            return "mock 确认/报告：会做 X，不做 Y。(plain-language output)"
         from autoproduct.upstream.discover import BRIEF_CRITIC_MARKER, BRIEFWRITER_MARKER
         from autoproduct.upstream.plan import PLAN_CRITIC_MARKER, PLANNER_MARKER
 
@@ -204,7 +216,11 @@ class MockProvider(Provider):
 
     def _spec(self, user: str) -> str:
         """Canned item-store spec; emits a vague criterion on the first pass
-        when the request asks for it, clean once revision feedback arrives."""
+        when the request asks for it, clean once revision feedback arrives.
+        A task:<id> marker in the request uniquifies the title/tests so
+        autopilot runs produce distinct specs per task."""
+        task = re.search(r"task:(\w+)", user)
+        suffix = f" {task.group(1)}" if task else ""
         vague_first_pass = "make it vague" in user and "revision_feedback" not in user
         criteria = [
             "When a client POSTs /items with a non-empty name, the system shall "
@@ -213,15 +229,16 @@ class MockProvider(Provider):
         ]
         if vague_first_pass:
             criteria[0] = "The system shall be fast when adding items."
+        module = f"feature_{task.group(1)}" if task else "feature"
         return yaml.safe_dump(
             {
-                "title": "Item store API",
-                "design": "Single module `feature.py` with an in-memory ItemStore; "
+                "title": f"Item store API{suffix}",
+                "design": f"Single module `{module}.py` with an in-memory ItemStore; "
                 "tests drive add() and list_items().",
                 "criteria": criteria,
                 "test_skeletons": [
                     {
-                        "path": "tests/test_feature.py",
+                        "path": f"tests/test_{module}.py",
                         "purpose": "add returns id; list returns newest first",
                         "covers": [0, 1],
                     }
@@ -231,11 +248,13 @@ class MockProvider(Provider):
         )
 
     def _implement(self, user: str) -> str:
+        task = re.search(r"feature_(\w+)`", user)
+        module = f"feature_{task.group(1)}" if task else "feature"
         return yaml.safe_dump(
             {
                 "files": [
                     {
-                        "path": "feature.py",
+                        "path": f"{module}.py",
                         "new_content": (
                             "class ItemStore:\n"
                             "    def __init__(self):\n"
@@ -251,9 +270,9 @@ class MockProvider(Provider):
                         ),
                     },
                     {
-                        "path": "tests/test_feature.py",
+                        "path": f"tests/test_{module}.py",
                         "new_content": (
-                            "from feature import ItemStore\n\n\n"
+                            f"from {module} import ItemStore\n\n\n"
                             "def test_add_returns_id():\n"
                             "    store = ItemStore()\n"
                             "    assert store.add('a') == 1\n\n\n"
