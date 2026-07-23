@@ -63,6 +63,7 @@ class MockProvider(Provider):
             )
         if ROOTCAUSE_MARKER in system:
             has_suspects = "score" in user
+            files_match = re.search(r"files: ([\w./-]+)", user)
             return yaml.safe_dump(
                 {
                     "hypothesis": "mock hypothesis from top suspect"
@@ -70,10 +71,14 @@ class MockProvider(Provider):
                     else "insufficient evidence",
                     "confidence": 75 if has_suspects else 30,
                     "implicated_commit": None,
-                    "implicated_files": [],
+                    "implicated_files": [files_match.group(1)] if files_match else [],
                     "next_action": "propose fix-PR",
                 }
             )
+        from autoproduct.maintenance.fixpr import FIXPR_MARKER
+
+        if FIXPR_MARKER in system:
+            return self._fixpr(user)
         files = _FILE_HEADER.findall(user)
         file_path = files[0] if files else "unknown"
         findings = []
@@ -128,6 +133,23 @@ class MockProvider(Provider):
             for item in recurring[:2]
         ]
         return yaml.safe_dump({"proposals": proposals}, sort_keys=False)
+
+    def _fixpr(self, user: str) -> str:
+        """Fix the planted `return a - b` bug in the provided file, else abstain."""
+        match = re.search(r'<file path="([^"]+)">\n(.*?)\n</file>', user, re.DOTALL)
+        if not match or "return a - b" not in match.group(2):
+            return yaml.safe_dump(
+                {"files": [], "abstain_reason": "no known planted bug found"}
+            )
+        fixed = match.group(2).replace("return a - b", "return a + b")
+        return yaml.safe_dump(
+            {
+                "files": [{"path": match.group(1), "new_content": fixed + "\n"}],
+                "commit_message": "fix: restore addition in add()",
+                "abstain_reason": None,
+            },
+            sort_keys=False,
+        )
 
     def _verify(self, user: str) -> str:
         """Refute-by-quote: VERIFIED iff the claimed evidence text actually

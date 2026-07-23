@@ -295,6 +295,12 @@ def triage(
     repo_dir: str = typer.Option(".", help="Repository to correlate against"),
     provider: str = typer.Option("anthropic", help="Provider (e.g. 'mock')"),
     days: int = typer.Option(7, help="Correlation window for recent commits"),
+    fix: bool = typer.Option(
+        False,
+        "--fix",
+        help="Assistive tier: attempt a fix-PR when a root cause is proposed "
+        "(this flag IS the human approval; the PR still re-enters code review)",
+    ),
 ):
     """Gate 6 intake — Maintenance MAS (§09.12): triage + root-cause."""
     from autoproduct.maintenance import Incident, run_maintenance
@@ -314,6 +320,25 @@ def triage(
     if result.suspects:
         console.print("suspects: " + ", ".join(s["sha"] for s in result.suspects))
     console.print(f"Artifacts: {result.artifacts_dir}")
+
+    if fix and result.verdict.value == "ROOT_CAUSE_PROPOSED":
+        from autoproduct.maintenance.fixpr import generate_fix_pr
+
+        attempt = generate_fix_pr(
+            incident, result.root_cause, repo_dir=repo_dir, provider=provider
+        )
+        console.print(
+            f"\nfix attempt: [bold]{attempt.status}[/bold]"
+            + (f" · branch {attempt.branch}" if attempt.branch else "")
+            + (f" · {attempt.pr_url}" if attempt.pr_url else "")
+        )
+        if attempt.detail:
+            console.print(f"  {attempt.detail}")
+        if attempt.files_changed:
+            console.print(f"  files: {', '.join(attempt.files_changed)}")
+    elif fix:
+        console.print("\nfix attempt skipped: no root cause proposed")
+
     if result.verdict.value.startswith("ESCALATE_"):
         raise typer.Exit(code=3)
 
