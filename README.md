@@ -14,8 +14,8 @@ autoproduct review <target> [--provider mock] [--mode fast|standard|deep]
 `<target>` is a GitHub PR URL (needs `gh` auth) or a local git range
 (`main...HEAD`, `HEAD`, …).
 
-Pipeline: **Gate 1 DoR → init → analyze (mode router) → vote (parallel ×6) →
-verify → leader → post**
+Pipeline: **Gate 1 DoR → init → analyze (mode router) → tools → vote
+(parallel ×6) → verify → leader → post**
 
 - Deterministic mode router (§08.3.5.1) — conservative, escalates on
   auth/billing paths, new dependencies, safety-removal signatures. Fast mode
@@ -29,6 +29,13 @@ verify → leader → post**
   empties. Heterogeneous providers (Anthropic, OpenAI, Google, xAI); when a
   provider's key is absent, the spec's declared fallback runs and the
   substitution is recorded in the output envelope — never silent.
+- Deterministic tools node (§09.7.3): three always-on pure-Python probes —
+  secret_scan, csrf_ssrf_probe (the two 100%-failure-rate AI-code
+  categories), slopsquat_check (live PyPI presence/age + Damerau typosquat
+  distance against popular packages) — plus availability-gated Semgrep,
+  Bandit, pip-audit, and TruffleHog wrappers (absent binaries report
+  `skipped`, never silently missing). Tool findings enter pre-verified,
+  feed voter context, and corroborate voter findings in scoring.
 - Fresh-agent verification (§09.4.6): every finding re-examined by an
   isolated verifier prompted to refute it; NOT_REPRODUCIBLE findings score 0.
 - Composite confidence scoring (§09.4.7): self-confidence (40) +
@@ -45,11 +52,9 @@ verify → leader → post**
 
 ## What's next (per doc 10)
 
-1. Deterministic tools node: Semgrep, Bandit, TruffleHog, pip-audit,
-   slopsquat_check, csrf_ssrf_probe.
-2. Voter tool access (read_file, grep, tree_sitter_query) so repo_graph can
+1. Voter tool access (read_file, grep, tree_sitter_query) so repo_graph can
    trace real cross-file references instead of returning BLOCKED.
-3. PR comment posting; HITL via GitHub Issues; mutation testing in isolated
+2. PR comment posting; HITL via GitHub Issues; mutation testing in isolated
    worktrees; the compounding loop.
 
 ## Layout

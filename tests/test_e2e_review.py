@@ -32,6 +32,7 @@ def test_planted_bugs_found_end_to_end(tmp_path, planted_diff_text, skills_dir):
         "dor_gate.yaml",
         "init.yaml",
         "analyze.yaml",
+        "tools.yaml",
         "vote.yaml",
         "verify.yaml",
         "leader.yaml",

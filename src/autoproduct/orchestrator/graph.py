@@ -5,11 +5,11 @@ module decides what runs next; LLMs only ever run inside voter nodes.
 
 Current graph:
 
-    dor_gate -> init -> analyze -> vote -> verify -> leader -> post
+    dor_gate -> init -> analyze -> tools -> vote -> verify -> leader -> post
         \\-(not ready)-> post
 
-tools / peer / adversarial_test nodes land in later milestones and slot
-between analyze and post without changing this topology's contract.
+peer / adversarial_test nodes land in later milestones and slot between
+analyze and post without changing this topology's contract.
 """
 
 from __future__ import annotations
@@ -27,7 +27,15 @@ from autoproduct import scoring, verify
 from autoproduct.diff import ParsedDiff, fetch_diff, parse_unified_diff
 from autoproduct.mirror import YamlMirror
 from autoproduct.orchestrator.mode_router import select_mode
-from autoproduct.state import LeaderResult, ReviewState, VoterFinding, VoterOutput
+from autoproduct.state import (
+    LeaderResult,
+    ReviewState,
+    VoterFinding,
+    VoterOutput,
+    VoterStatus,
+)
+from autoproduct.tools import run_all
+from autoproduct.tools.base import render_for_context
 from autoproduct.voters import load_voters
 
 MAX_REVIEWABLE_LINES = 2000
@@ -74,6 +82,30 @@ def analyze_node(state: ReviewState) -> dict[str, Any]:
     return {"mode": select_mode(diff, state.get("mode_override"))}
 
 
+def tools_node(state: ReviewState, *, repo_dir: str) -> dict[str, Any]:
+    """§09.7.3: deterministic analyzers run before any voter. Their findings
+    enter the pipeline pre-verified and their summary feeds voter context.
+    Skipped in fast mode — the cheap path stays cheap."""
+    if state.get("mode") == "fast":
+        return {"tool_reports": []}
+    diff = parse_unified_diff(state["diff"]["raw"])
+    reports = run_all(diff, repo_dir)
+    envelopes = [
+        VoterOutput(
+            voter=f"tool:{r.tool}",
+            model="deterministic",
+            status=VoterStatus.OK,
+            findings=r.findings,
+        )
+        for r in reports
+        if r.findings
+    ]
+    return {
+        "tool_reports": [r.model_dump(mode="json") for r in reports],
+        "voter_outputs": [e.model_dump(mode="json") for e in envelopes],
+    }
+
+
 def vote_node(
     state: ReviewState, *, skills_dir: str, provider_override: str | None
 ) -> dict[str, Any]:
@@ -83,6 +115,13 @@ def vote_node(
         voters = fast or voters[:1]
     diff_raw = state["diff"]["raw"]
     context = state.get("project_context", "")
+    from autoproduct.tools import ToolReport
+
+    tool_summary = render_for_context(
+        [ToolReport.model_validate(r) for r in state.get("tool_reports", [])]
+    )
+    if tool_summary:
+        context = f"{context}\n\n{tool_summary}" if context else tool_summary
     with ThreadPoolExecutor(max_workers=len(voters)) as pool:
         outputs = list(pool.map(lambda v: v.run(diff_raw, context=context), voters))
     return {"voter_outputs": [o.model_dump(mode="json") for o in outputs]}
@@ -108,12 +147,15 @@ def verify_node(
             finding, diff_raw, provider=provider, model=model, fallback=fallback
         )
 
-    todo = [f for o in outputs for f in o.findings]
+    all_findings = [f for o in outputs for f in o.findings]
+    # Tool findings arrive pre-verified and pre-scored; only voter findings
+    # get the fresh-agent pass (and tool findings still count as corroboration).
+    todo = [f for f in all_findings if f.verification is None and f.voter in skills]
     if todo:
         with ThreadPoolExecutor(max_workers=min(8, len(todo))) as pool:
             list(pool.map(check, todo))
         for finding in todo:
-            finding.score = scoring.score_finding(finding, todo)
+            finding.score = scoring.score_finding(finding, all_findings)
     return {"verified_outputs": [o.model_dump(mode="json") for o in outputs]}
 
 
@@ -176,6 +218,9 @@ def build_graph(
     graph.add_node("init", mirrored("init", functools.partial(init_node, repo_dir=repo_dir)))
     graph.add_node("analyze", mirrored("analyze", analyze_node))
     graph.add_node(
+        "tools", mirrored("tools", functools.partial(tools_node, repo_dir=repo_dir))
+    )
+    graph.add_node(
         "vote",
         mirrored(
             "vote",
@@ -206,7 +251,8 @@ def build_graph(
         "dor_gate", lambda s: "init" if s["dor_pass"] else "post"
     )
     graph.add_edge("init", "analyze")
-    graph.add_edge("analyze", "vote")
+    graph.add_edge("analyze", "tools")
+    graph.add_edge("tools", "vote")
     graph.add_edge("vote", "verify")
     graph.add_edge("verify", "leader")
     graph.add_edge("leader", "post")
