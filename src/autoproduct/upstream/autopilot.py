@@ -216,7 +216,10 @@ def _review_head(root: Path, provider: str):
 
     skills = Path(__file__).resolve().parent.parent.parent.parent / "skills"
     review, _ = run_review(
-        "HEAD~1", repo_dir=str(root), skills_dir=str(skills),
+        # Committed range only — the working tree carries uncommitted
+        # bookkeeping from later tasks mid-autopilot (Gate 2 apply
+        # conflicts otherwise; found by the product bench).
+        "HEAD~1..HEAD", repo_dir=str(root), skills_dir=str(skills),
         provider_override=provider if provider == "mock" else None,
     )
     return review

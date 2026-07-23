@@ -1,0 +1,191 @@
+"""Product benchmark — built-product quality, measured end to end.
+
+The review benchmark measures whether the system judges code well; this
+measures whether it BUILDS products well. Architecture follows the
+WebGen-Bench insight (arXiv:2505.03733): quality is what INDEPENDENT
+probes observe when exercised against the built product — never the
+builder's own tests (circular) and never review verdicts alone.
+
+A case = an FDR + behavioral probes. The full autopilot runs in a fresh
+workspace; each probe is a self-contained script executed IN the built
+workspace with the product's runtime env. Scores:
+
+- build_rate: tasks that reached `built`
+- probe_pass_rate: independent behaviors that actually work
+- clean_review_rate: built tasks whose review was APPROVE-class
+
+The composite is deliberately NOT averaged away: all three numbers are
+reported; a build that compiles but fails its probes is visible as
+exactly that.
+"""
+
+from __future__ import annotations
+
+import datetime
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+import yaml
+from pydantic import BaseModel, Field
+
+from autoproduct.upstream import init_workspace
+from autoproduct.upstream.autopilot import run_autopilot
+from autoproduct.upstream.provisioning import preview_env
+
+_PROBE_TIMEOUT_S = 60
+
+
+class Probe(BaseModel):
+    name: str
+    script: str  # python source, exit 0 = behavior works
+
+
+class ProductCase(BaseModel):
+    name: str
+    profile: str = "web"
+    fdr: str
+    probes: list[Probe] = Field(min_length=1)
+
+
+class ProbeResult(BaseModel):
+    name: str
+    passed: bool
+    detail: str = ""
+
+
+class CaseResult(BaseModel):
+    name: str
+    autopilot_status: str
+    tasks_total: int = 0
+    tasks_built: int = 0
+    clean_reviews: int = 0
+    probes: list[ProbeResult] = Field(default_factory=list)
+    duration_s: float = 0.0
+
+    @property
+    def build_rate(self) -> float:
+        return self.tasks_built / self.tasks_total if self.tasks_total else 0.0
+
+    @property
+    def probe_pass_rate(self) -> float:
+        return (
+            sum(1 for p in self.probes if p.passed) / len(self.probes)
+            if self.probes
+            else 0.0
+        )
+
+    @property
+    def clean_review_rate(self) -> float:
+        return self.clean_reviews / self.tasks_built if self.tasks_built else 0.0
+
+
+class BenchSummary(BaseModel):
+    cases: list[CaseResult]
+    build_rate: float
+    probe_pass_rate: float
+    clean_review_rate: float
+
+
+def load_cases(cases_dir: str | Path) -> list[ProductCase]:
+    cases = [
+        ProductCase.model_validate(yaml.safe_load(p.read_text(encoding="utf-8")))
+        for p in sorted(Path(cases_dir).glob("*.yaml"))
+    ]
+    if not cases:
+        raise FileNotFoundError(f"no product cases in {cases_dir}")
+    return cases
+
+
+def run_probe(workspace: Path, probe: Probe) -> ProbeResult:
+    """The probe runs IN the built workspace with the product's runtime
+    env — it observes the product from outside, like a user's script."""
+    import os
+
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=f"-{probe.name}.py", delete=False
+    ) as handle:
+        handle.write(probe.script)
+        probe_path = handle.name
+    try:
+        proc = subprocess.run(
+            [sys.executable, probe_path],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            timeout=_PROBE_TIMEOUT_S,
+            env={**os.environ, "PYTHONPATH": str(workspace), **preview_env(workspace)},
+        )
+        detail = (proc.stdout or proc.stderr).strip().splitlines()
+        return ProbeResult(
+            name=probe.name,
+            passed=proc.returncode == 0,
+            detail=detail[-1][:200] if detail else "",
+        )
+    except subprocess.TimeoutExpired:
+        return ProbeResult(name=probe.name, passed=False, detail="probe timed out")
+    finally:
+        Path(probe_path).unlink(missing_ok=True)
+
+
+def run_case(case: ProductCase, *, provider: str | None = None) -> CaseResult:
+    import time
+
+    start = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="autoproduct-productbench-") as tmp:
+        workspace = init_workspace(Path(tmp) / case.name, case.name, case.profile)
+        (workspace / "FDR.md").write_text(case.fdr, encoding="utf-8")
+        result = run_autopilot(
+            workspace,
+            workspace / "FDR.md",
+            provider=provider or "anthropic",
+            yes=True,
+        )
+        built = [o for o in result.outcomes if o.status == "built"]
+        clean = [
+            o for o in built
+            if o.review_verdict in ("APPROVE", "APPROVE_WITH_NOTES")
+        ]
+        probes = [run_probe(workspace, probe) for probe in case.probes]
+        return CaseResult(
+            name=case.name,
+            autopilot_status=result.status,
+            tasks_total=len(result.outcomes),
+            tasks_built=len(built),
+            clean_reviews=len(clean),
+            probes=probes,
+            duration_s=round(time.monotonic() - start, 1),
+        )
+
+
+def run_product_bench(
+    cases_dir: str | Path, *, provider: str | None = None, limit: int | None = None
+) -> BenchSummary:
+    cases = load_cases(cases_dir)[: limit or None]
+    results = [run_case(c, provider=provider) for c in cases]
+
+    def _avg(values: list[float]) -> float:
+        return sum(values) / len(values) if values else 0.0
+
+    return BenchSummary(
+        cases=results,
+        build_rate=_avg([r.build_rate for r in results]),
+        probe_pass_rate=_avg([r.probe_pass_rate for r in results]),
+        clean_review_rate=_avg([r.clean_review_rate for r in results]),
+    )
+
+
+def save_summary(summary: BenchSummary, repo_dir: str | Path) -> Path:
+    out_dir = Path(repo_dir) / ".mas" / "product-bench"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d-%H%M")
+    path = out_dir / f"result-{stamp}.yaml"
+    payload = summary.model_dump(mode="json")
+    payload["rates"] = {
+        "build_rate": round(summary.build_rate, 3),
+        "probe_pass_rate": round(summary.probe_pass_rate, 3),
+        "clean_review_rate": round(summary.clean_review_rate, 3),
+    }
+    path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    return path
