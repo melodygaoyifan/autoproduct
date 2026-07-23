@@ -151,5 +151,70 @@ def replay(
     )
 
 
+@app.command()
+def compound(
+    repo_dir: str = typer.Option(".", help="Repository whose review record to aggregate"),
+    days: int = typer.Option(7, help="Signal window in days"),
+    provider: str = typer.Option("anthropic", help="Proposer provider"),
+    model: str = typer.Option("claude-opus-4-8", help="Proposer model"),
+    pr: bool = typer.Option(
+        False, "--pr", help="Open a CLAUDE.md update PR (human still merges)"
+    ),
+):
+    """Weekly compounding loop: aggregate review signals, propose CLAUDE.md
+    constraints, optionally open the human-gated update PR (§09.8)."""
+    import datetime
+    import subprocess
+
+    from autoproduct import compound as comp
+
+    date = datetime.date.today().isoformat()
+    signals = comp.collect_signals(repo_dir, days=days)
+    proposals = comp.propose(signals, provider=provider, model=model)
+    report = comp.render_proposal(signals, proposals, date=date)
+
+    out_dir = Path(repo_dir) / ".mas" / "compound"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report_path = out_dir / f"proposal-{date}.md"
+    report_path.write_text(report, encoding="utf-8")
+    console.print(report)
+    console.print(f"\nProposal written to {report_path}")
+
+    if not proposals:
+        raise typer.Exit(code=0)
+    if not pr:
+        console.print("Re-run with --pr to open the CLAUDE.md update PR.")
+        raise typer.Exit(code=0)
+
+    branch = f"autoproduct/compound-{date}"
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", *args], cwd=repo_dir, capture_output=True, text=True
+        )
+
+    git("checkout", "-B", branch)
+    comp.apply_to_claude_md(repo_dir, proposals, date=date)
+    git("add", "CLAUDE.md")
+    git("commit", "-m", f"compound: propose {len(proposals)} CLAUDE.md constraint(s) ({date})")
+    push = git("push", "-u", "origin", branch)
+    if push.returncode != 0:
+        console.print(f"[yellow]push failed: {push.stderr.strip()[:200]}[/yellow]")
+        raise typer.Exit(code=1)
+    created = subprocess.run(
+        [
+            "gh", "pr", "create",
+            "--title", f"[compound] CLAUDE.md constraints — {date}",
+            "--body", report + "\n\n🤖 opened by the autoproduct compounding loop",
+        ],
+        cwd=repo_dir, capture_output=True, text=True,
+    )
+    output = (created.stdout or created.stderr).strip()
+    git("checkout", "-")
+    if created.returncode != 0:
+        console.print(f"[yellow]gh pr create failed: {output[:200]}[/yellow]")
+        raise typer.Exit(code=1)
+    console.print(output.splitlines()[-1] if output else "(no gh output)")
+
+
 def main() -> None:
     sys.exit(app())
