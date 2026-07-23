@@ -193,7 +193,12 @@ def test_gate_node(state: ReviewState, *, repo_dir: str) -> dict[str, Any]:
                 status="skipped", summary="fast mode skips the test gate"
             ).model_dump(mode="json")
         }
-    report = testing.run_test_gate(repo_dir, state["diff"]["raw"])
+    report = testing.run_test_gate(
+        repo_dir,
+        state["diff"]["raw"],
+        mode=state.get("mode", "standard"),
+        changed_files=state["diff"].get("changed_files", []),
+    )
     update: dict[str, Any] = {"test_report": report.model_dump(mode="json")}
     verdict = Verdict(state["leader"]["verdict"])
     if report.gate_blocks and verdict in (
@@ -202,10 +207,11 @@ def test_gate_node(state: ReviewState, *, repo_dir: str) -> dict[str, Any]:
     ):
         leader = dict(state["leader"])
         leader["verdict"] = Verdict.REQUEST_CHANGES.value
-        leader["summary"] = (
-            f"[Gate 2 blocked ({report.status}): {report.summary}] "
-            + leader["summary"]
-        )
+        if report.mutation and report.mutation.status == "failed":
+            reason = report.mutation.summary
+        else:
+            reason = f"{report.status}: {report.summary}"
+        leader["summary"] = f"[Gate 2 blocked — {reason}] " + leader["summary"]
         update["leader"] = leader
     return update
 

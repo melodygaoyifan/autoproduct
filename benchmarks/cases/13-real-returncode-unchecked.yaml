@@ -1,0 +1,36 @@
+description: 'Real bug from PR #5 self-review: subprocess failure reported as success'
+diff: 'diff --git a/publish.py b/publish.py
+
+  --- a/publish.py
+
+  +++ b/publish.py
+
+  @@ -1,0 +1,8 @@
+
+  +def open_pr(title, body, cwd):
+
+  +    created = subprocess.run(
+
+  +        ["gh", "pr", "create", "--title", title, "--body", body],
+
+  +        cwd=cwd, capture_output=True, text=True, timeout=60,
+
+  +    )
+
+  +    output = (created.stdout or created.stderr).strip()
+
+  +    print(output.splitlines()[-1] if output else "(no output)")
+
+  +    return output
+
+  '
+expected:
+- file_path: publish.py
+  keywords:
+  - returncode
+  - return code
+  - unchecked
+  - not checked
+  - as success
+  - failure
+name: 13-real-returncode-unchecked

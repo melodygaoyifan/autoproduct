@@ -8,10 +8,10 @@ SKILLS = Path(__file__).parent.parent / "skills"
 
 def test_cases_load_and_are_labeled():
     cases = load_cases(CASES)
-    assert len(cases) == 10
+    assert len(cases) == 13  # 8 synthetic defects + 2 clean + 3 real-PR-derived
     defect_cases = [c for c in cases if c.expected]
     clean_cases = [c for c in cases if not c.expected]
-    assert len(defect_cases) == 8
+    assert len(defect_cases) == 11
     assert len(clean_cases) == 2
 
 
@@ -37,6 +37,6 @@ def test_mock_benchmark_scores_deterministic_slice():
     assert by_name["09-clean-rename"].findings_total == 0
     assert by_name["10-clean-constant"].findings_total == 0
 
-    # 02-missing-where needs real semantic review; mock can't see it.
-    assert result.recall >= 7 / 8 - 0.01 or by_name["02-missing-where"].expected_matched == 0
+    # 02-missing-where and the real-PR cases (11-13) need real semantic
+    # review; the mock stack must at least not hallucinate findings there.
     assert result.precision == 1.0

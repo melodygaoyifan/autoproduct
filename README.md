@@ -73,12 +73,17 @@ the Stage-1 compounding loop (`autoproduct compound [--pr]`), the replay
 CLI, and the labeled benchmark (`autoproduct bench`, bars: recall ≥40%,
 precision ≥50%).
 
+Deep mode adds: the T3 sandbox (suite runs in a network-disconnected
+docker container — deps sync first, then the network is cut) and mutation
+testing (mutmut mutates only the changed files; score <60% blocks
+APPROVE-class verdicts, with "no tests" mutants counted as survivors).
+The benchmark set includes three cases distilled from real bugs
+autoproduct's own self-reviews caught.
+
 ## What's next (per doc 10)
 
-1. Mutation testing (mutmut, deep mode) and the T3 container sandbox for
-   Gate 2.
-2. tree-sitter/pyright upgrades to the repo_graph toolset.
-3. Real-PR benchmark instances to supplement the seeded synthetic set.
+1. tree-sitter/pyright upgrades to the repo_graph toolset.
+2. v0.5.0 track: the Deployment Review MAS (§09.11).
 
 ## Layout
 
