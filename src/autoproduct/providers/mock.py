@@ -14,9 +14,14 @@ import yaml
 from autoproduct.providers.base import Provider, register
 
 _PLANTED = [
-    (re.compile(r"except\s*(Exception)?\s*:\s*pass"), "Swallowed exception", "P9"),
-    (re.compile(r"\beval\("), "eval() on untrusted input", "P6"),
-    (re.compile(r"SELECT .*(%s|\+|f\")", re.IGNORECASE), "SQL built by interpolation", "P6"),
+    (re.compile(r"except\s*(Exception)?\s*:\s*pass"), "Swallowed exception", "P9", "high"),
+    (re.compile(r"\beval\("), "eval() on untrusted input", "P6", "high"),
+    (
+        re.compile(r"f\"SELECT|SELECT .*(%s|\" *\+)", re.IGNORECASE),
+        "SQL built by interpolation",
+        "P6",
+        "critical",
+    ),
 ]
 
 _DIFF_LINE = re.compile(r"^\+(?!\+\+)(.*)$", re.MULTILINE)
@@ -51,12 +56,12 @@ class MockProvider(Provider):
         file_path = files[0] if files else "unknown"
         findings = []
         for lineno, line in enumerate(_DIFF_LINE.findall(user), start=1):
-            for pattern, title, taxonomy in _PLANTED:
+            for pattern, title, taxonomy, severity in _PLANTED:
                 if pattern.search(line):
                     findings.append(
                         {
                             "title": title,
-                            "severity": "high",
+                            "severity": severity,
                             "confidence": "likely",
                             "file_path": file_path,
                             "line_start": lineno,

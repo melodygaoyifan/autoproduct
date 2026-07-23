@@ -13,7 +13,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from autoproduct.orchestrator import run_review
+from autoproduct.orchestrator import is_interrupted, resume_review, run_review
 from autoproduct.state import Verdict
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -53,6 +53,21 @@ def review(
             console.print(f"  - {reason}")
         raise typer.Exit(code=2)
 
+    if is_interrupted(state):
+        console.print(
+            f"\n[bold red]{state['leader']['verdict']}[/bold red] — paused at "
+            "Gate 3 (Review Gate) for human decision."
+        )
+        if state.get("hitl_issue_url"):
+            console.print(f"Issue: {state['hitl_issue_url']}")
+        elif state.get("hitl_note"):
+            console.print(f"(no issue created: {state['hitl_note']})")
+        console.print(
+            f"Resume with: autoproduct resume {state['review_id']} "
+            f"--decision ack   (or --decision override:REQUEST_CHANGES)"
+        )
+        raise typer.Exit(code=3)
+
     assert result is not None
     color = {
         Verdict.APPROVE: "green",
@@ -79,6 +94,24 @@ def review(
     console.print(f"\nArtifacts: {state['artifacts_dir']}")
     if result.verdict.is_escalation:
         raise typer.Exit(code=3)
+
+
+@app.command()
+def resume(
+    review_id: str = typer.Argument(..., help="Review ID shown when the run paused"),
+    decision: str = typer.Option(
+        ..., help="'ack' to accept the verdict, or 'override:<VERDICT>'"
+    ),
+    repo_dir: str = typer.Option(".", help="Repository the review ran in"),
+):
+    """Continue a review paused at Gate 3 (Review Gate)."""
+    result, state = resume_review(review_id, decision, repo_dir=repo_dir)
+    assert result is not None
+    console.print(
+        f"\nResumed with decision [bold]{decision}[/bold] → "
+        f"[bold]{result.verdict.value}[/bold] — {result.summary}"
+    )
+    console.print(f"Artifacts: {state['artifacts_dir']}")
 
 
 def main() -> None:

@@ -6,21 +6,29 @@ module decides what runs next; LLMs only ever run inside voter nodes.
 Current graph:
 
     dor_gate -> init -> analyze -> tools -> vote -> verify -> leader -> post
-        \\-(not ready)-> post
+        \\-(not ready)-> post          (escalation) -> escalate -> hitl -> post
 
-peer / adversarial_test nodes land in later milestones and slot between
-analyze and post without changing this topology's contract.
+Gate 3 (Review Gate): ESCALATE_* verdicts open a GitHub Issue and pause at
+`hitl` via interrupt(); `autoproduct resume <review-id> --decision ...`
+continues from the SQLite checkpoint. peer / adversarial_test nodes land in
+later milestones.
 """
 
 from __future__ import annotations
 
 import functools
+import sqlite3
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import yaml as yaml_lib
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
+from langgraph.types import Command, interrupt
+
+from autoproduct import github, render
 
 from autoproduct import leader as leader_mod
 from autoproduct import scoring, verify
@@ -30,6 +38,7 @@ from autoproduct.orchestrator.mode_router import select_mode
 from autoproduct.state import (
     LeaderResult,
     ReviewState,
+    Verdict,
     VoterFinding,
     VoterOutput,
     VoterStatus,
@@ -175,10 +184,66 @@ def leader_node(state: ReviewState, *, provider_override: str | None) -> dict[st
     return {"leader": result.model_dump(mode="json")}
 
 
+def escalate_node(state: ReviewState) -> dict[str, Any]:
+    """Open the HITL issue. Separate from hitl_node so the side effect runs
+    exactly once — interrupt() re-executes its own node body on resume."""
+    result = LeaderResult.model_validate(state["leader"])
+    resume_hint = f"autoproduct resume {state['review_id']} --decision ack"
+    body = render.render_issue_body(
+        result,
+        review_id=state["review_id"],
+        target=state["target"],
+        resume_hint=resume_hint,
+    )
+    issue_url, note = github.create_issue(
+        state.get("repo_dir", "."),
+        f"[autoproduct] {result.verdict.value}: review {state['review_id']}",
+        body,
+    )
+    return {"hitl_issue_url": issue_url, "hitl_note": note}
+
+
+def hitl_node(state: ReviewState) -> dict[str, Any]:
+    """Gate 3 — pause for the human. Decision: 'ack' keeps the verdict,
+    'override:<VERDICT>' replaces it, recorded in the audit trail."""
+    decision = interrupt(
+        {
+            "review_id": state["review_id"],
+            "verdict": state["leader"]["verdict"],
+            "issue_url": state.get("hitl_issue_url"),
+        }
+    )
+    decision = str(decision).strip()
+    update: dict[str, Any] = {"hitl_decision": decision}
+    if decision.startswith("override:"):
+        new_verdict = Verdict(decision.split(":", 1)[1].strip())
+        leader = dict(state["leader"])
+        leader["summary"] = (
+            f"[human override: {leader['verdict']} → {new_verdict.value}] "
+            + leader["summary"]
+        )
+        leader["verdict"] = new_verdict.value
+        update["leader"] = leader
+    return update
+
+
 def post_node(state: ReviewState, *, mirror: YamlMirror) -> dict[str, Any]:
     if not state.get("dor_pass"):
         mirror.write("dor_fail", {"reasons": state.get("dor_reasons", [])})
         return {"artifacts_dir": str(mirror.dir)}
+    result = LeaderResult.model_validate(state["leader"])
+    outputs = [
+        VoterOutput.model_validate(o)
+        for o in (state.get("verified_outputs") or state.get("voter_outputs") or [])
+    ]
+    comment = render.render_pr_comment(
+        result,
+        review_id=state["review_id"],
+        mode=state.get("mode", "standard"),
+        voter_outputs=outputs,
+    )
+    (mirror.dir / "review.md").write_text(comment, encoding="utf-8")
+    comment_note = github.post_pr_comment(state["target"], comment)
     mirror.write(
         "final",
         {
@@ -189,6 +254,12 @@ def post_node(state: ReviewState, *, mirror: YamlMirror) -> dict[str, Any]:
             "summary": state["leader"]["summary"],
             "findings": state["leader"]["findings"],
             "blocked_voters": state["leader"]["blocked_voters"],
+            "hitl": {
+                "issue_url": state.get("hitl_issue_url"),
+                "note": state.get("hitl_note"),
+                "decision": state.get("hitl_decision"),
+            },
+            "pr_comment": {"posted": comment_note is None, "note": comment_note},
         },
     )
     return {"artifacts_dir": str(mirror.dir)}
@@ -251,6 +322,8 @@ def build_graph(
             "leader", functools.partial(leader_node, provider_override=provider_override)
         ),
     )
+    graph.add_node("escalate", mirrored("escalate", escalate_node))
+    graph.add_node("hitl", hitl_node)
     graph.add_node("post", functools.partial(post_node, mirror=mirror))
 
     graph.set_entry_point("dor_gate")
@@ -261,10 +334,19 @@ def build_graph(
     graph.add_edge("analyze", "tools")
     graph.add_edge("tools", "vote")
     graph.add_edge("vote", "verify")
+    graph.add_conditional_edges(
+        "leader",
+        lambda s: "escalate" if Verdict(s["leader"]["verdict"]).is_escalation else "post",
+    )
     graph.add_edge("verify", "leader")
-    graph.add_edge("leader", "post")
+    graph.add_edge("escalate", "hitl")
+    graph.add_edge("hitl", "post")
     graph.add_edge("post", END)
-    return graph.compile(), review_id
+
+    checkpoint_db = Path(repo_dir) / ".mas" / "checkpoints.db"
+    checkpoint_db.parent.mkdir(parents=True, exist_ok=True)
+    saver = SqliteSaver(sqlite3.connect(checkpoint_db, check_same_thread=False))
+    return graph.compile(checkpointer=saver), review_id
 
 
 def _mirror_view(name: str, update: dict[str, Any]) -> dict[str, Any]:
@@ -291,14 +373,51 @@ def run_review(
         skills_dir=skills_dir,
         provider_override=provider_override,
     )
+    meta = {
+        "target": target,
+        "repo_dir": repo_dir,
+        "skills_dir": skills_dir,
+        "provider_override": provider_override,
+    }
+    meta_path = Path(repo_dir) / ".mas" / "reviews" / review_id / "meta.yaml"
+    meta_path.write_text(yaml_lib.safe_dump(meta), encoding="utf-8")
+
     initial: ReviewState = {
         "review_id": review_id,
         "target": target,
         "mode_override": mode_override,
+        "repo_dir": repo_dir,
     }
     if diff_text is not None:
         initial["diff"] = {"raw": diff_text}
-    final = app.invoke(initial)
+    final = app.invoke(initial, config={"configurable": {"thread_id": review_id}})
+    result = (
+        LeaderResult.model_validate(final["leader"]) if final.get("leader") else None
+    )
+    return result, final
+
+
+def is_interrupted(state: ReviewState) -> bool:
+    return "__interrupt__" in state
+
+
+def resume_review(
+    review_id: str, decision: str, *, repo_dir: str = "."
+) -> tuple[LeaderResult | None, ReviewState]:
+    """Continue a review paused at Gate 3 from its SQLite checkpoint."""
+    meta_path = Path(repo_dir) / ".mas" / "reviews" / review_id / "meta.yaml"
+    if not meta_path.exists():
+        raise FileNotFoundError(f"no paused review {review_id!r} under {repo_dir}")
+    meta = yaml_lib.safe_load(meta_path.read_text(encoding="utf-8"))
+    app, _ = build_graph(
+        repo_dir=meta["repo_dir"],
+        skills_dir=meta["skills_dir"],
+        provider_override=meta.get("provider_override"),
+        review_id=review_id,
+    )
+    final = app.invoke(
+        Command(resume=decision), config={"configurable": {"thread_id": review_id}}
+    )
     result = (
         LeaderResult.model_validate(final["leader"]) if final.get("leader") else None
     )

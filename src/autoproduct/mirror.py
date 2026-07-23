@@ -15,7 +15,9 @@ class YamlMirror:
     def __init__(self, base_dir: str | Path, review_id: str):
         self.dir = Path(base_dir) / review_id
         self.dir.mkdir(parents=True, exist_ok=True)
-        self._step = 0
+        # Resume-safe: a second process continuing this review appends
+        # after the existing steps instead of overwriting them.
+        self._step = len(list(self.dir.glob("[0-9][0-9]-*.yaml")))
 
     def write(self, node: str, payload: dict[str, Any]) -> Path:
         self._step += 1

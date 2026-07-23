@@ -27,7 +27,7 @@ def test_planted_bugs_found_end_to_end(tmp_path, planted_diff_text, skills_dir):
     assert "Swallowed exception" in titles
     assert "eval() on untrusted input" in titles
 
-    mirror_files = sorted(Path(state["artifacts_dir"]).glob("*.yaml"))
+    mirror_files = sorted(Path(state["artifacts_dir"]).glob("[0-9]*-*.yaml"))
     assert [p.name.split("-", 1)[1] for p in mirror_files] == [
         "dor_gate.yaml",
         "init.yaml",

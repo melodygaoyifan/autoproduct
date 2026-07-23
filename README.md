@@ -54,14 +54,22 @@ Pipeline: **Gate 1 DoR → init → analyze (mode router) → tools → vote
   cluster into one, corroborators credited, narrative summary written. The
   LLM half degrades to the deterministic result on any failure; it can
   improve the report but never gate the pipeline.
+- Gate 3 HITL (§09.8): ESCALATE_* verdicts open a GitHub Issue on the
+  reviewed repo (template-rendered, with resume instructions), then pause
+  the graph via `interrupt()` on a SQLite checkpoint. `autoproduct resume
+  <review-id> --decision ack|override:<VERDICT>` continues in a separate
+  process; overrides are stamped into the summary and audit trail.
+- PR comment (`review.md`) rendered for every completed review — verdict,
+  findings table with scores, collapsible suggested fixes, blocked voters,
+  and provider substitutions all visible — and posted via `gh` when the
+  target is a PR URL.
 - YAML mirror audit trail per node under `.mas/reviews/<id>/`.
 - Hermetic test suite (mock provider, no network): `uv run pytest`.
 
 ## What's next (per doc 10)
 
-1. PR comment posting (`gh`), so verdicts land on the PR itself.
-2. HITL via GitHub Issues (interrupt on ESCALATE_*, resume on directive).
-3. Mutation testing in isolated worktrees; per-voter logs; the compounding
+1. Dogfood on a real PR (the bootstrap protocol's first self-review).
+2. Mutation testing in isolated worktrees; per-voter logs; the compounding
    loop; tree-sitter/pyright upgrades to the repo_graph toolset.
 
 ## Layout
