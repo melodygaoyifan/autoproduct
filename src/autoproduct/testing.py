@@ -243,9 +243,21 @@ def run_mutation(worktree: Path, changed_files: list[str]) -> MutationReport:
         return MutationReport(status="skipped", summary="mutmut not installed")
 
     pyproject = worktree / "pyproject.toml"
-    config = "\n[tool.mutmut]\nsource_paths = [" + ", ".join(
-        f'"{t}"' for t in targets
-    ) + "]\n"
+    # mutmut runs the suite against its mutants/ copy, which contains ONLY
+    # source_paths + also_copy — everything the tests touch must be copied
+    # or imports/data lookups break (found on the PR #9 self-review).
+    copy_dirs = sorted(
+        f"{d.name}/"
+        for d in worktree.iterdir()
+        if d.is_dir() and not d.name.startswith(".") and d.name != "mutants"
+    )
+    config = (
+        "\n[tool.mutmut]\nsource_paths = ["
+        + ", ".join(f'"{t}"' for t in targets)
+        + "]\nalso_copy = ["
+        + ", ".join(f'"{d}"' for d in copy_dirs)
+        + "]\n"
+    )
     pyproject.write_text(
         (pyproject.read_text(encoding="utf-8") if pyproject.exists() else "") + config,
         encoding="utf-8",
@@ -286,9 +298,19 @@ def _mutmut_in_env(worktree: Path) -> bool:
 
 
 def _mutmut_cmd(worktree: Path, subcommand: str) -> list[str]:
+    # A uv project must run mutmut inside ITS environment (--with injects
+    # mutmut if the project doesn't depend on it) — running the host env's
+    # mutmut resolves imports against the host checkout, so worktree
+    # mutations never load and every mutant reports "no tests" (found on
+    # the PR #9 self-review).
+    if _mutmut_in_env(worktree):
+        return [
+            "uv", "run", "--project", str(worktree), "--with", "mutmut",
+            "mutmut", subcommand,
+        ]
     if shutil.which("mutmut"):
         return ["mutmut", subcommand]
-    return ["uv", "run", "--project", str(worktree), "mutmut", subcommand]
+    return [sys.executable, "-m", "mutmut", subcommand]
 
 
 def _last_line(text: str) -> str:

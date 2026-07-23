@@ -114,6 +114,33 @@ def test_voter_tool_roundtrip(repo, tmp_path):
     assert "app/orders.py:3" in final_messages[-1]["content"]
 
 
+@register
+class FlakyEmptyProvider(Provider):
+    """First reply empty, then a valid envelope after the nudge."""
+
+    name = "flaky_empty"
+    calls = 0
+
+    def chat(self, *, model, system, messages, max_tokens=4096):
+        FlakyEmptyProvider.calls += 1
+        if FlakyEmptyProvider.calls == 1:
+            return "   "
+        assert "previous reply was empty" in messages[-1]["content"]
+        return yaml.safe_dump({"status": "OK", "findings": []})
+
+
+def test_empty_response_nudged_once_then_recovers(tmp_path):
+    FlakyEmptyProvider.calls = 0
+    path = tmp_path / "plain.md"
+    path.write_text(
+        "---\nname: plain\ndescription: d\nprovider: mock\nmodel: m\n---\nJudge.\n"
+    )
+    voter = Voter(SpecValidator().load(path), provider_override="flaky_empty")
+    output = voter.run("(diff)")
+    assert output.status is VoterStatus.OK
+    assert FlakyEmptyProvider.calls == 2
+
+
 def test_unknown_tool_in_spec_rejected(tmp_path):
     path = tmp_path / "bad.md"
     path.write_text(
