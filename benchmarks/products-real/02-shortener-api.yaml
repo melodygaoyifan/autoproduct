@@ -1,0 +1,67 @@
+name: 02-shortener-api
+profile: web
+fdr: '短链接服务的后端 API。
+
+
+  必须有这些接口，路径和方法必须完全一致：
+
+  1. POST /api/links 请求体 {"url": 长链接} → 返回 {"code": 短码}
+
+  2. GET /<code> → 302 跳转到原链接（Location 头是原链接）
+
+  3. GET /api/links/<code>/stats → 返回 {"clicks": 被访问次数}
+
+
+  数据要存在数据库里。暂时不要：页面、自定义短码、登录。
+
+  成功：三个接口都能按说明工作，点击计数准确。'
+probes:
+- name: shorten-and-redirect
+  script: "import json, os, socket, subprocess, sys, time, urllib.request, urllib.error\n\
+    \nPORT = 8641\nBASE = f\"http://127.0.0.1:{PORT}\"\nentry = next((e for e in (\"\
+    app/main.py\", \"main.py\", \"app.py\") if os.path.exists(e)), None)\nassert entry,\
+    \ \"no runnable entry point (app/main.py, main.py, app.py)\"\nproc = subprocess.Popen([sys.executable,\
+    \ entry],\n                        env={**os.environ, \"PORT\": str(PORT)},\n\
+    \                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n\
+    \ndef wait():\n    for _ in range(60):\n        try:\n            socket.create_connection((\"\
+    127.0.0.1\", PORT), 1).close(); return\n        except OSError:\n            time.sleep(0.5)\n\
+    \    raise SystemExit(\"server never listened\")\n\ndef call(method, path, body=None,\
+    \ expect_redirect=False):\n    req = urllib.request.Request(BASE + path, method=method,\n\
+    \        data=json.dumps(body).encode() if body is not None else None,\n     \
+    \   headers={\"Content-Type\": \"application/json\"})\n    opener = urllib.request.build_opener(NoRedirect())\
+    \ if expect_redirect else urllib.request.build_opener()\n    try:\n        resp\
+    \ = opener.open(req, timeout=10)\n        raw = resp.read().decode() or \"{}\"\
+    \n        try: data = json.loads(raw)\n        except Exception: data = {\"_raw\"\
+    : raw}\n        return resp.status, data, dict(resp.headers)\n    except urllib.error.HTTPError\
+    \ as e:\n        return e.code, {}, dict(e.headers)\n\nclass NoRedirect(urllib.request.HTTPRedirectHandler):\n\
+    \    def redirect_request(self, *a, **k): return None\n\nwait()\ntry:\n    s,\
+    \ d, _ = call(\"POST\", \"/api/links\", {\"url\": \"https://example.com/very/long\"\
+    })\n    assert s in (200, 201) and d.get(\"code\"), d\n    code = d[\"code\"]\n\
+    \    s, _, headers = call(\"GET\", f\"/{code}\", expect_redirect=True)\n    assert\
+    \ s in (301, 302, 307, 308), f\"redirect returned {s}\"\n    location = {k.lower():\
+    \ v for k, v in headers.items()}.get(\"location\", \"\")\n    assert \"example.com/very/long\"\
+    \ in location, location\n    print(\"redirect ok\")\nfinally:\n    proc.terminate()\n"
+- name: click-counting
+  script: "import json, os, socket, subprocess, sys, time, urllib.request, urllib.error\n\
+    \nPORT = 8641\nBASE = f\"http://127.0.0.1:{PORT}\"\nentry = next((e for e in (\"\
+    app/main.py\", \"main.py\", \"app.py\") if os.path.exists(e)), None)\nassert entry,\
+    \ \"no runnable entry point (app/main.py, main.py, app.py)\"\nproc = subprocess.Popen([sys.executable,\
+    \ entry],\n                        env={**os.environ, \"PORT\": str(PORT)},\n\
+    \                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n\
+    \ndef wait():\n    for _ in range(60):\n        try:\n            socket.create_connection((\"\
+    127.0.0.1\", PORT), 1).close(); return\n        except OSError:\n            time.sleep(0.5)\n\
+    \    raise SystemExit(\"server never listened\")\n\ndef call(method, path, body=None,\
+    \ expect_redirect=False):\n    req = urllib.request.Request(BASE + path, method=method,\n\
+    \        data=json.dumps(body).encode() if body is not None else None,\n     \
+    \   headers={\"Content-Type\": \"application/json\"})\n    opener = urllib.request.build_opener(NoRedirect())\
+    \ if expect_redirect else urllib.request.build_opener()\n    try:\n        resp\
+    \ = opener.open(req, timeout=10)\n        raw = resp.read().decode() or \"{}\"\
+    \n        try: data = json.loads(raw)\n        except Exception: data = {\"_raw\"\
+    : raw}\n        return resp.status, data, dict(resp.headers)\n    except urllib.error.HTTPError\
+    \ as e:\n        return e.code, {}, dict(e.headers)\n\nclass NoRedirect(urllib.request.HTTPRedirectHandler):\n\
+    \    def redirect_request(self, *a, **k): return None\n\nwait()\ntry:\n    _,\
+    \ d, _ = call(\"POST\", \"/api/links\", {\"url\": \"https://example.com/x\"})\n\
+    \    code = d[\"code\"]\n    call(\"GET\", f\"/{code}\", expect_redirect=True)\n\
+    \    call(\"GET\", f\"/{code}\", expect_redirect=True)\n    s, d, _ = call(\"\
+    GET\", f\"/api/links/{code}/stats\")\n    assert s == 200 and int(d[\"clicks\"\
+    ]) == 2, d\n    print(\"click count ok\")\nfinally:\n    proc.terminate()\n"

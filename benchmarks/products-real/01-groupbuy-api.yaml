@@ -1,0 +1,93 @@
+name: 01-groupbuy-api
+profile: web
+fdr: '小区团购接龙的后端 API（先只做后端，页面以后再说）。
+
+
+  必须有这些接口，路径和方法必须完全一致：
+
+  1. POST /api/groupbuys 请求体 {"title": 商品名, "price": 单价} → 返回 {"id": 整数}
+
+  2. GET /api/groupbuys/<id> → 返回 {"id", "title", "price"}
+
+  3. POST /api/orders 请求体 {"groupbuy_id", "name": 买家名, "quantity": 数量} → 返回 {"id"}
+
+  4. GET /api/groupbuys/<id>/summary → 返回 {"total_quantity": 总件数, "total_amount":
+  应收总额}
+
+
+  数据要存在数据库里，重启不丢。暂时不要：页面、支付、登录。
+
+  成功：上面四个接口都能按说明工作。'
+probes:
+- name: create-and-read
+  script: "import json, os, socket, subprocess, sys, time, urllib.request, urllib.error\n\
+    \nPORT = 8641\nBASE = f\"http://127.0.0.1:{PORT}\"\nentry = next((e for e in (\"\
+    app/main.py\", \"main.py\", \"app.py\") if os.path.exists(e)), None)\nassert entry,\
+    \ \"no runnable entry point (app/main.py, main.py, app.py)\"\nproc = subprocess.Popen([sys.executable,\
+    \ entry],\n                        env={**os.environ, \"PORT\": str(PORT)},\n\
+    \                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n\
+    \ndef wait():\n    for _ in range(60):\n        try:\n            socket.create_connection((\"\
+    127.0.0.1\", PORT), 1).close(); return\n        except OSError:\n            time.sleep(0.5)\n\
+    \    raise SystemExit(\"server never listened\")\n\ndef call(method, path, body=None,\
+    \ expect_redirect=False):\n    req = urllib.request.Request(BASE + path, method=method,\n\
+    \        data=json.dumps(body).encode() if body is not None else None,\n     \
+    \   headers={\"Content-Type\": \"application/json\"})\n    opener = urllib.request.build_opener(NoRedirect())\
+    \ if expect_redirect else urllib.request.build_opener()\n    try:\n        resp\
+    \ = opener.open(req, timeout=10)\n        raw = resp.read().decode() or \"{}\"\
+    \n        try: data = json.loads(raw)\n        except Exception: data = {\"_raw\"\
+    : raw}\n        return resp.status, data, dict(resp.headers)\n    except urllib.error.HTTPError\
+    \ as e:\n        return e.code, {}, dict(e.headers)\n\nclass NoRedirect(urllib.request.HTTPRedirectHandler):\n\
+    \    def redirect_request(self, *a, **k): return None\n\nwait()\ntry:\n    s,\
+    \ d, _ = call(\"POST\", \"/api/groupbuys\", {\"title\": \"苹果\", \"price\": 5.5})\n\
+    \    assert s in (200, 201), f\"create returned {s}\"\n    gid = d[\"id\"]\n \
+    \   s, d, _ = call(\"GET\", f\"/api/groupbuys/{gid}\")\n    assert s == 200 and\
+    \ d[\"title\"] == \"苹果\" and float(d[\"price\"]) == 5.5, d\n    print(\"create/read\
+    \ ok\")\nfinally:\n    proc.terminate()\n"
+- name: order-summary-math
+  script: "import json, os, socket, subprocess, sys, time, urllib.request, urllib.error\n\
+    \nPORT = 8641\nBASE = f\"http://127.0.0.1:{PORT}\"\nentry = next((e for e in (\"\
+    app/main.py\", \"main.py\", \"app.py\") if os.path.exists(e)), None)\nassert entry,\
+    \ \"no runnable entry point (app/main.py, main.py, app.py)\"\nproc = subprocess.Popen([sys.executable,\
+    \ entry],\n                        env={**os.environ, \"PORT\": str(PORT)},\n\
+    \                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n\
+    \ndef wait():\n    for _ in range(60):\n        try:\n            socket.create_connection((\"\
+    127.0.0.1\", PORT), 1).close(); return\n        except OSError:\n            time.sleep(0.5)\n\
+    \    raise SystemExit(\"server never listened\")\n\ndef call(method, path, body=None,\
+    \ expect_redirect=False):\n    req = urllib.request.Request(BASE + path, method=method,\n\
+    \        data=json.dumps(body).encode() if body is not None else None,\n     \
+    \   headers={\"Content-Type\": \"application/json\"})\n    opener = urllib.request.build_opener(NoRedirect())\
+    \ if expect_redirect else urllib.request.build_opener()\n    try:\n        resp\
+    \ = opener.open(req, timeout=10)\n        raw = resp.read().decode() or \"{}\"\
+    \n        try: data = json.loads(raw)\n        except Exception: data = {\"_raw\"\
+    : raw}\n        return resp.status, data, dict(resp.headers)\n    except urllib.error.HTTPError\
+    \ as e:\n        return e.code, {}, dict(e.headers)\n\nclass NoRedirect(urllib.request.HTTPRedirectHandler):\n\
+    \    def redirect_request(self, *a, **k): return None\n\nwait()\ntry:\n    _,\
+    \ d, _ = call(\"POST\", \"/api/groupbuys\", {\"title\": \"牛奶\", \"price\": 4.0})\n\
+    \    gid = d[\"id\"]\n    call(\"POST\", \"/api/orders\", {\"groupbuy_id\": gid,\
+    \ \"name\": \"张三\", \"quantity\": 2})\n    call(\"POST\", \"/api/orders\", {\"\
+    groupbuy_id\": gid, \"name\": \"李四\", \"quantity\": 3})\n    s, d, _ = call(\"\
+    GET\", f\"/api/groupbuys/{gid}/summary\")\n    assert s == 200, s\n    assert\
+    \ int(d[\"total_quantity\"]) == 5, d\n    assert abs(float(d[\"total_amount\"\
+    ]) - 20.0) < 0.01, d\n    print(\"summary math ok\")\nfinally:\n    proc.terminate()\n"
+- name: unknown-id-is-client-error
+  script: "import json, os, socket, subprocess, sys, time, urllib.request, urllib.error\n\
+    \nPORT = 8641\nBASE = f\"http://127.0.0.1:{PORT}\"\nentry = next((e for e in (\"\
+    app/main.py\", \"main.py\", \"app.py\") if os.path.exists(e)), None)\nassert entry,\
+    \ \"no runnable entry point (app/main.py, main.py, app.py)\"\nproc = subprocess.Popen([sys.executable,\
+    \ entry],\n                        env={**os.environ, \"PORT\": str(PORT)},\n\
+    \                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n\
+    \ndef wait():\n    for _ in range(60):\n        try:\n            socket.create_connection((\"\
+    127.0.0.1\", PORT), 1).close(); return\n        except OSError:\n            time.sleep(0.5)\n\
+    \    raise SystemExit(\"server never listened\")\n\ndef call(method, path, body=None,\
+    \ expect_redirect=False):\n    req = urllib.request.Request(BASE + path, method=method,\n\
+    \        data=json.dumps(body).encode() if body is not None else None,\n     \
+    \   headers={\"Content-Type\": \"application/json\"})\n    opener = urllib.request.build_opener(NoRedirect())\
+    \ if expect_redirect else urllib.request.build_opener()\n    try:\n        resp\
+    \ = opener.open(req, timeout=10)\n        raw = resp.read().decode() or \"{}\"\
+    \n        try: data = json.loads(raw)\n        except Exception: data = {\"_raw\"\
+    : raw}\n        return resp.status, data, dict(resp.headers)\n    except urllib.error.HTTPError\
+    \ as e:\n        return e.code, {}, dict(e.headers)\n\nclass NoRedirect(urllib.request.HTTPRedirectHandler):\n\
+    \    def redirect_request(self, *a, **k): return None\n\nwait()\ntry:\n    s,\
+    \ _, _ = call(\"GET\", \"/api/groupbuys/999999\")\n    assert 400 <= s < 500,\
+    \ f\"unknown id returned {s}, expected 4xx\"\n    print(\"404 ok\")\nfinally:\n\
+    \    proc.terminate()\n"
