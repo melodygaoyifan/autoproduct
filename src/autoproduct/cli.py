@@ -363,5 +363,18 @@ def deploy_outcome(
     )
 
 
+@app.command()
+def serve(
+    repo_dir: str = typer.Option(".", help="Repository the server operates on"),
+    host: str = typer.Option("127.0.0.1", help="Bind address"),
+    port: int = typer.Option(8422, help="Port"),
+):
+    """Webhook mode: GitHub PR events -> reviews, incident POSTs -> triage.
+    Requires AUTOPRODUCT_WEBHOOK_SECRET for signature verification."""
+    from autoproduct.server import serve as run_server
+
+    run_server(repo_dir, host=host, port=port)
+
+
 def main() -> None:
     sys.exit(app())
