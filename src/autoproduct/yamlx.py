@@ -34,7 +34,9 @@ def extract_mapping(raw: str, expected_keys: tuple[str, ...]) -> dict:
             continue
         if isinstance(data, dict) and any(k in data for k in expected_keys):
             return data
-    raise ValueError(
+    error = ValueError(
         f"no YAML mapping with any of {expected_keys} found in response "
         f"({len(raw)} chars)"
     )
+    error.raw_snippet = raw  # surfaced in failure notes for debugging
+    raise error

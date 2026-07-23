@@ -14,7 +14,8 @@ def test_replay_reconstructs_timeline(tmp_path, planted_diff_text, skills_dir):
     )
     rep = load_replay(tmp_path / ".mas" / "reviews", state["review_id"])
     assert [s.node for s in rep.steps] == [
-        "dor_gate", "init", "analyze", "tools", "vote", "verify", "leader", "final",
+        "dor_gate", "init", "analyze", "tools", "vote", "verify", "leader",
+        "test_gate", "final",
     ]
     assert rep.verdict == "REQUEST_CHANGES"
     assert rep.duration_s is not None and rep.duration_s >= 0

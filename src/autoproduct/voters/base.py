@@ -106,6 +106,14 @@ class Voter:
                     provider_name, model = fallback.provider, fallback.model
                 else:
                     break
+            except ValueError as exc:
+                # Parse failure: keep a snippet of what the model actually
+                # said so blocked-voter debugging isn't blind.
+                snippet = " ".join(str(getattr(exc, "raw_snippet", "")).split())[:160]
+                last_error = f"{type(exc).__name__}: {exc}"
+                if snippet:
+                    last_error += f" | response began: {snippet!r}"
+                attempts += 1
             except Exception as exc:  # noqa: BLE001 — transient classes retry
                 last_error = f"{type(exc).__name__}: {exc}"
                 attempts += 1

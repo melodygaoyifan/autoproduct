@@ -93,6 +93,9 @@ def summarize_step(step: ReplayStep) -> str:
     if step.node == "leader":
         leader = payload.get("leader", {})
         return f"{leader.get('verdict')} ({len(leader.get('findings', []))} finding(s))"
+    if step.node == "test_gate":
+        report = payload.get("test_report", {})
+        return f"{report.get('status')} — {report.get('summary')}"
     if step.node == "final":
         return str(payload.get("verdict"))
     return ", ".join(sorted(payload)) or "(empty)"

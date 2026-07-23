@@ -36,6 +36,7 @@ def test_planted_bugs_found_end_to_end(tmp_path, planted_diff_text, skills_dir):
         "vote.yaml",
         "verify.yaml",
         "leader.yaml",
+        "test_gate.yaml",
         "final.yaml",
     ]
     final = yaml.safe_load(mirror_files[-1].read_text())

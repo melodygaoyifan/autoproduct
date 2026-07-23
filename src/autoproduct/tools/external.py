@@ -25,6 +25,11 @@ def _added_lines(diff: ParsedDiff) -> dict[str, set[int]]:
     return {f.path: {lineno for lineno, _ in f.added} for f in diff.files}
 
 
+def _is_test_file(path: str) -> bool:
+    name = Path(path).name
+    return "tests/" in path or name.startswith("test_") or name.endswith("_test.py")
+
+
 def _skipped(tool: str, hint: str) -> ToolReport:
     return ToolReport(tool=tool, status="skipped", detail=f"not installed ({hint})")
 
@@ -86,6 +91,8 @@ def bandit(diff: ParsedDiff, repo_dir: str) -> ToolReport:
         line = result["line_number"]
         if line not in added.get(path, set()):
             continue
+        if result["test_id"] == "B101" and _is_test_file(path):
+            continue  # assert is the pytest idiom, not a finding
         findings.append(
             tool_finding(
                 "bandit",

@@ -28,7 +28,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
-from autoproduct import github, render
+from autoproduct import github, render, testing
 
 from autoproduct import leader as leader_mod
 from autoproduct import scoring, verify
@@ -184,6 +184,32 @@ def leader_node(state: ReviewState, *, provider_override: str | None) -> dict[st
     return {"leader": result.model_dump(mode="json")}
 
 
+def test_gate_node(state: ReviewState, *, repo_dir: str) -> dict[str, Any]:
+    """Gate 2 — Test Gate. An APPROVE-class verdict cannot survive a failing
+    suite; the downgrade is deterministic code, not model judgment."""
+    if state.get("mode") == "fast":
+        return {
+            "test_report": testing.TestReport(
+                status="skipped", summary="fast mode skips the test gate"
+            ).model_dump(mode="json")
+        }
+    report = testing.run_test_gate(repo_dir, state["diff"]["raw"])
+    update: dict[str, Any] = {"test_report": report.model_dump(mode="json")}
+    verdict = Verdict(state["leader"]["verdict"])
+    if report.gate_blocks and verdict in (
+        Verdict.APPROVE,
+        Verdict.APPROVE_WITH_NOTES,
+    ):
+        leader = dict(state["leader"])
+        leader["verdict"] = Verdict.REQUEST_CHANGES.value
+        leader["summary"] = (
+            f"[Gate 2 blocked ({report.status}): {report.summary}] "
+            + leader["summary"]
+        )
+        update["leader"] = leader
+    return update
+
+
 def escalate_node(state: ReviewState) -> dict[str, Any]:
     """Open the HITL issue. Separate from hitl_node so the side effect runs
     exactly once — interrupt() re-executes its own node body on resume."""
@@ -227,6 +253,27 @@ def hitl_node(state: ReviewState) -> dict[str, Any]:
     return update
 
 
+def _append_voter_logs(state: ReviewState, outputs: list[VoterOutput]) -> None:
+    """Per-voter log (§09.8.5): one appended entry per invocation, the raw
+    material the weekly compounding loop aggregates."""
+    base = Path(state.get("repo_dir", ".")) / ".mas" / "voters"
+    for output in outputs:
+        if output.voter.startswith("tool:"):
+            continue
+        log_path = base / output.voter / "log.yaml"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "review_id": state["review_id"],
+            "model": output.model,
+            "status": output.status.value,
+            "substituted_from": output.substituted_from,
+            "findings": len(output.findings),
+            "duration_s": round(output.duration_s, 2),
+        }
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(yaml_lib.safe_dump([entry], sort_keys=False))
+
+
 def post_node(state: ReviewState, *, mirror: YamlMirror) -> dict[str, Any]:
     if not state.get("dor_pass"):
         mirror.write("dor_fail", {"reasons": state.get("dor_reasons", [])})
@@ -236,11 +283,13 @@ def post_node(state: ReviewState, *, mirror: YamlMirror) -> dict[str, Any]:
         VoterOutput.model_validate(o)
         for o in (state.get("verified_outputs") or state.get("voter_outputs") or [])
     ]
+    _append_voter_logs(state, outputs)
     comment = render.render_pr_comment(
         result,
         review_id=state["review_id"],
         mode=state.get("mode", "standard"),
         voter_outputs=outputs,
+        test_report=state.get("test_report"),
     )
     (mirror.dir / "review.md").write_text(comment, encoding="utf-8")
     comment_note = github.post_pr_comment(state["target"], comment)
@@ -254,6 +303,7 @@ def post_node(state: ReviewState, *, mirror: YamlMirror) -> dict[str, Any]:
             "summary": state["leader"]["summary"],
             "findings": state["leader"]["findings"],
             "blocked_voters": state["leader"]["blocked_voters"],
+            "test_report": state.get("test_report"),
             "hitl": {
                 "issue_url": state.get("hitl_issue_url"),
                 "note": state.get("hitl_note"),
@@ -322,6 +372,10 @@ def build_graph(
             "leader", functools.partial(leader_node, provider_override=provider_override)
         ),
     )
+    graph.add_node(
+        "test_gate",
+        mirrored("test_gate", functools.partial(test_gate_node, repo_dir=repo_dir)),
+    )
     graph.add_node("escalate", mirrored("escalate", escalate_node))
     graph.add_node("hitl", hitl_node)
     graph.add_node("post", functools.partial(post_node, mirror=mirror))
@@ -336,9 +390,12 @@ def build_graph(
     graph.add_edge("vote", "verify")
     graph.add_conditional_edges(
         "leader",
-        lambda s: "escalate" if Verdict(s["leader"]["verdict"]).is_escalation else "post",
+        lambda s: "escalate"
+        if Verdict(s["leader"]["verdict"]).is_escalation
+        else "test_gate",
     )
     graph.add_edge("verify", "leader")
+    graph.add_edge("test_gate", "post")
     graph.add_edge("escalate", "hitl")
     graph.add_edge("hitl", "post")
     graph.add_edge("post", END)

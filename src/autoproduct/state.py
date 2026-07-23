@@ -125,6 +125,7 @@ class ReviewState(TypedDict, total=False):
     voter_outputs: Annotated[list[dict[str, Any]], operator.add]
     verified_outputs: list[dict[str, Any]]  # voter_outputs after §09.4.6/§09.4.7
     leader: dict[str, Any]  # serialized LeaderResult
+    test_report: dict[str, Any]  # Gate 2 result (§09.5.4.10)
     repo_dir: str
     hitl_issue_url: str | None
     hitl_note: str | None
