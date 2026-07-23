@@ -17,7 +17,14 @@ class _ChatCompletionsProvider(Provider):
     base_url: str
     api_key_env: str
 
-    def complete(self, *, model: str, system: str, user: str, max_tokens: int = 4096) -> str:
+    def chat(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[dict[str, str]],
+        max_tokens: int = 4096,
+    ) -> str:
         api_key = os.environ.get(self.api_key_env)
         if not api_key:
             raise ProviderError(f"{self.api_key_env} is not set")
@@ -27,10 +34,7 @@ class _ChatCompletionsProvider(Provider):
             json={
                 "model": model,
                 "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
+                "messages": [{"role": "system", "content": system}, *messages],
             },
             timeout=120,
         )

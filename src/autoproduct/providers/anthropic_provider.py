@@ -9,7 +9,14 @@ from autoproduct.providers.base import Provider, ProviderError, register
 class AnthropicProvider(Provider):
     name = "anthropic"
 
-    def complete(self, *, model: str, system: str, user: str, max_tokens: int = 4096) -> str:
+    def chat(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[dict[str, str]],
+        max_tokens: int = 4096,
+    ) -> str:
         if not os.environ.get("ANTHROPIC_API_KEY"):
             raise ProviderError("ANTHROPIC_API_KEY is not set")
         import anthropic
@@ -19,7 +26,7 @@ class AnthropicProvider(Provider):
             model=model,
             max_tokens=max_tokens,
             system=system,
-            messages=[{"role": "user", "content": user}],
+            messages=messages,
         )
         return "".join(
             block.text for block in response.content if block.type == "text"

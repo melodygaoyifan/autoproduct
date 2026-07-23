@@ -4,7 +4,7 @@ description: Hunts duplication and violations of the project's own conventions a
 provider: anthropic
 model: claude-sonnet-5
 taxonomy_slice: [P7, P8]
-tools: []
+tools: [read_file, grep, list_files]
 risk_ceiling: 0
 timeout_s: 120
 max_retries: 3

@@ -19,8 +19,24 @@ class Provider(abc.ABC):
     name: str = "abstract"
 
     @abc.abstractmethod
+    def chat(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[dict[str, str]],
+        max_tokens: int = 4096,
+    ) -> str:
+        """Multi-turn completion. messages are [{'role': 'user'|'assistant',
+        'content': str}, ...]; returns the raw text response."""
+
     def complete(self, *, model: str, system: str, user: str, max_tokens: int = 4096) -> str:
-        """Single-turn completion returning the raw text response."""
+        return self.chat(
+            model=model,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            max_tokens=max_tokens,
+        )
 
 
 _REGISTRY: dict[str, type[Provider]] = {}

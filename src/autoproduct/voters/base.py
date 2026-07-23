@@ -19,6 +19,7 @@ from autoproduct.harness import SpecValidator
 from autoproduct.harness.spec_validator import LoadedSkill
 from autoproduct.providers import ProviderError, get_provider
 from autoproduct.state import VoterFinding, VoterOutput, VoterStatus
+from autoproduct.tools.voter_tools import TOOL_PROTOCOL_DOC, ToolBox, ToolBudgetExceeded
 
 _SYSTEM_TEMPLATE = """You are the {name} voter in a multi-agent code review system.
 
@@ -66,9 +67,15 @@ class Voter:
         self.spec = skill.spec
         self.provider_name = provider_override or self.spec.provider
 
-    def run(self, diff_text: str, context: str = "") -> VoterOutput:
+    def run(
+        self, diff_text: str, context: str = "", repo_dir: str | None = None
+    ) -> VoterOutput:
         start = time.monotonic()
         system = _SYSTEM_TEMPLATE.format(name=self.spec.name, body=self.skill.body)
+        if self.spec.tools and repo_dir:
+            system += TOOL_PROTOCOL_DOC.format(
+                tools=", ".join(self.spec.tools), budget=self.spec.tool_budget
+            )
         user = _USER_TEMPLATE.format(context=context or "(none)", diff=diff_text)
 
         provider_name, model = self.provider_name, self.spec.model
@@ -77,10 +84,12 @@ class Voter:
         attempts = 0
         while attempts <= self.spec.max_retries:
             try:
-                raw = get_provider(provider_name).complete(
-                    model=model, system=system, user=user
+                toolbox = (
+                    ToolBox(repo_dir, self.spec.tools, budget=self.spec.tool_budget)
+                    if self.spec.tools and repo_dir
+                    else None
                 )
-                output = self._parse(raw)
+                output = self._investigate(provider_name, model, system, user, toolbox)
                 output.model = model
                 output.substituted_from = substituted_from
                 output.duration_s = time.monotonic() - start
@@ -107,6 +116,58 @@ class Voter:
             notes=f"failed after retries: {last_error}",
             duration_s=time.monotonic() - start,
         )
+
+    def _investigate(
+        self,
+        provider_name: str,
+        model: str,
+        system: str,
+        user: str,
+        toolbox: ToolBox | None,
+    ) -> VoterOutput:
+        """Investigation loop: the voter may issue tool_request turns before
+        its final verdict. Budget is enforced by the ToolBox, and one final
+        forced-verdict turn fires when it runs out."""
+        provider = get_provider(provider_name)
+        messages: list[dict[str, str]] = [{"role": "user", "content": user}]
+        while True:
+            raw = provider.chat(model=model, system=system, messages=messages)
+            request = self._tool_request(raw)
+            if request is None or toolbox is None:
+                return self._parse(raw)
+            messages.append({"role": "assistant", "content": raw})
+            try:
+                result = toolbox.call(request.get("tool", ""), request.get("args") or {})
+            except ToolBudgetExceeded:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "Tool budget exhausted. Respond with your final "
+                        "status/findings YAML now, based on what you have.",
+                    }
+                )
+                raw = provider.chat(model=model, system=system, messages=messages)
+                return self._parse(raw)
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"<tool_result tool={request.get('tool')} "
+                    f"remaining_calls={toolbox.remaining}>\n{result}\n</tool_result>",
+                }
+            )
+
+    @staticmethod
+    def _tool_request(raw: str) -> dict | None:
+        text = raw.strip().strip("`")
+        if "tool_request" not in text.split("\n", 1)[0] and "tool_request:" not in text:
+            return None
+        try:
+            data = yaml.safe_load(text)
+        except yaml.YAMLError:
+            return None
+        if isinstance(data, dict) and isinstance(data.get("tool_request"), dict):
+            return data["tool_request"]
+        return None
 
     def _parse(self, raw: str) -> VoterOutput:
         text = raw.strip()

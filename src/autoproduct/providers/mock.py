@@ -27,6 +27,18 @@ _FILE_HEADER = re.compile(r"^\+\+\+ b/(.+)$", re.MULTILINE)
 class MockProvider(Provider):
     name = "mock"
 
+    def chat(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[dict[str, str]],
+        max_tokens: int = 4096,
+    ) -> str:
+        return self.complete(
+            model=model, system=system, user=messages[0]["content"], max_tokens=max_tokens
+        )
+
     def complete(self, *, model: str, system: str, user: str, max_tokens: int = 4096) -> str:
         from autoproduct.leader import LEADER_MARKER
         from autoproduct.verify import VERIFIER_MARKER

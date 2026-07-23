@@ -107,7 +107,7 @@ def tools_node(state: ReviewState, *, repo_dir: str) -> dict[str, Any]:
 
 
 def vote_node(
-    state: ReviewState, *, skills_dir: str, provider_override: str | None
+    state: ReviewState, *, skills_dir: str, provider_override: str | None, repo_dir: str
 ) -> dict[str, Any]:
     voters = load_voters(skills_dir, provider_override=provider_override)
     if state.get("mode") == "fast":
@@ -123,7 +123,11 @@ def vote_node(
     if tool_summary:
         context = f"{context}\n\n{tool_summary}" if context else tool_summary
     with ThreadPoolExecutor(max_workers=len(voters)) as pool:
-        outputs = list(pool.map(lambda v: v.run(diff_raw, context=context), voters))
+        outputs = list(
+            pool.map(
+                lambda v: v.run(diff_raw, context=context, repo_dir=repo_dir), voters
+            )
+        )
     return {"voter_outputs": [o.model_dump(mode="json") for o in outputs]}
 
 
@@ -225,7 +229,10 @@ def build_graph(
         mirrored(
             "vote",
             functools.partial(
-                vote_node, skills_dir=skills_dir, provider_override=provider_override
+                vote_node,
+                skills_dir=skills_dir,
+                provider_override=provider_override,
+                repo_dir=repo_dir,
             ),
         ),
     )

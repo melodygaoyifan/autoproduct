@@ -4,7 +4,7 @@ description: Hunts logic, state-management, data-handling, and error-handling bu
 provider: anthropic
 model: claude-opus-4-8
 taxonomy_slice: [P2, P3, P4, P9]
-tools: []
+tools: [read_file, grep]
 risk_ceiling: 0
 timeout_s: 120
 max_retries: 3

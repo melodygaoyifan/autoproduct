@@ -38,6 +38,7 @@ class VoterSpec(BaseModel):
     model: str
     taxonomy_slice: list[str] = Field(default_factory=list)
     tools: list[str] = Field(default_factory=list)
+    tool_budget: int = Field(default=10, ge=0, le=25)
     risk_ceiling: int = Field(default=0, ge=0, le=VOTER_RISK_CEILING)
     timeout_s: int = Field(default=120, gt=0)
     max_retries: int = Field(default=3, ge=0, le=3)
@@ -75,6 +76,14 @@ class SpecValidator:
                 raise VoterSpecValidationError(
                     f"{path}: unknown provider {provider!r} (known: {sorted(KNOWN_PROVIDERS)})"
                 )
+        from autoproduct.tools.voter_tools import VOTER_TOOL_REGISTRY
+
+        unknown_tools = set(spec.tools) - VOTER_TOOL_REGISTRY
+        if unknown_tools:
+            raise VoterSpecValidationError(
+                f"{path}: unknown tools {sorted(unknown_tools)} "
+                f"(registry: {sorted(VOTER_TOOL_REGISTRY)})"
+            )
         body = match.group(2).strip()
         if not body:
             raise VoterSpecValidationError(f"{path}: skill body is empty")

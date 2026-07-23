@@ -26,7 +26,14 @@ Pipeline: **Gate 1 DoR → init → analyze (mode router) → tools → vote
 - Full six-voter roster (Correctness, Security, Performance, Context,
   Repo Graph, Style), each mapped to its DAPLab taxonomy slice, with
   `<untrusted_*>` prompt hygiene and BLOCKED_* statuses instead of silent
-  empties. Heterogeneous providers (Anthropic, OpenAI, Google, xAI); when a
+  empties.
+- Voter investigation tools (§09.7.1): read-only, repo-scoped, size-capped
+  `read_file` / `grep` / `list_files`, allowlisted per voter spec with a
+  per-invocation call budget enforced at the ToolBox boundary. Works across
+  all provider families via a text tool protocol. Live demo: a signature
+  change whose only caller sits outside the diff — repo_graph greps the
+  repo and flags the breakage with the caller's line quoted (DAPLab P8, the
+  category diff-only review structurally misses). Heterogeneous providers (Anthropic, OpenAI, Google, xAI); when a
   provider's key is absent, the spec's declared fallback runs and the
   substitution is recorded in the output envelope — never silent.
 - Deterministic tools node (§09.7.3): three always-on pure-Python probes —
@@ -52,10 +59,10 @@ Pipeline: **Gate 1 DoR → init → analyze (mode router) → tools → vote
 
 ## What's next (per doc 10)
 
-1. Voter tool access (read_file, grep, tree_sitter_query) so repo_graph can
-   trace real cross-file references instead of returning BLOCKED.
-2. PR comment posting; HITL via GitHub Issues; mutation testing in isolated
-   worktrees; the compounding loop.
+1. PR comment posting (`gh`), so verdicts land on the PR itself.
+2. HITL via GitHub Issues (interrupt on ESCALATE_*, resume on directive).
+3. Mutation testing in isolated worktrees; per-voter logs; the compounding
+   loop; tree-sitter/pyright upgrades to the repo_graph toolset.
 
 ## Layout
 

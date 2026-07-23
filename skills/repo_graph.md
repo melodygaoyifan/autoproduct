@@ -4,7 +4,8 @@ description: Hunts cross-file breakage — changed contracts whose dependents we
 provider: xai
 model: grok-4
 taxonomy_slice: [P8]
-tools: []
+tools: [read_file, grep, list_files]
+tool_budget: 12
 risk_ceiling: 0
 timeout_s: 120
 max_retries: 3
@@ -35,6 +36,9 @@ Hunt, within the diff:
 4. **Partial refactors** — the diff updates some call sites of a pattern
    but visibly not all (e.g. three of four usages migrated).
 
-Note: until tool access lands, you see only the diff — favor
-BLOCKED_MISSING_CONTEXT over speculation when dependents are invisible.
-Only report what you can quote.
+Method: for every changed symbol, `grep` for its call sites across the
+repo, then `read_file` the callers the diff did not touch. A caller passing
+the old signature is your finding — quote the caller's line as evidence.
+Use BLOCKED_MISSING_CONTEXT only when your tools genuinely cannot reach
+what you need. Only report what you can quote from the diff or a tool
+result.

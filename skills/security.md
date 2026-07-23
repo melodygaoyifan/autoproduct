@@ -4,7 +4,7 @@ description: Hunts vulnerabilities and, above all, the safety-removal meta-patte
 provider: openai
 model: gpt-5.4
 taxonomy_slice: [P6]
-tools: []
+tools: [read_file, grep]
 risk_ceiling: 0
 timeout_s: 120
 max_retries: 3
