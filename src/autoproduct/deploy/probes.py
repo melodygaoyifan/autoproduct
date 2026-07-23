@@ -71,6 +71,99 @@ def migration_scan(diff: ParsedDiff, repo_dir: str) -> ToolReport:
     return ToolReport(tool="migration_scan", status="ok", findings=findings)
 
 
+_CANARY_KINDS = re.compile(r"^kind:\s*(Rollout|Canary)\s*$", re.MULTILINE)
+
+
+def canary_scan(diff: ParsedDiff, repo_dir: str) -> ToolReport:
+    """Static analysis of Argo Rollouts / Flagger manifests in the diff
+    (§09.11): weakened analysis is a deploy risk even before any cluster
+    integration exists. Signals, all from removed vs added lines:
+
+    - analysis/steps removed without replacement
+    - traffic step percentages raised
+    - pause durations shortened or pauses removed
+    - failure thresholds loosened
+    """
+    findings = []
+    for file in diff.files:
+        added_text = "\n".join(text for _, text in file.added)
+        removed_text = "\n".join(file.removed)
+        whole = added_text + "\n" + removed_text
+        if not (_CANARY_KINDS.search(whole) or re.search(r"(rollout|canary)", file.path, re.I)):
+            continue
+
+        checks = [
+            (
+                r"(analysis|analysisTemplate|metrics):",
+                "Canary analysis removed from rollout spec",
+                "Automated analysis is the safety net of a progressive rollout; "
+                "removing it makes promotion blind.",
+            ),
+            (
+                r"-\s*pause:",
+                "Rollout pause step removed",
+                "Pause steps are the observation windows; without them the "
+                "rollout promotes without bake time.",
+            ),
+        ]
+        for pattern, title, explanation in checks:
+            if re.search(pattern, removed_text) and not re.search(pattern, added_text):
+                lineno = file.added[0][0] if file.added else 1
+                findings.append(
+                    tool_finding(
+                        "canary_scan",
+                        title=title,
+                        severity="high",
+                        file_path=file.path,
+                        line=lineno,
+                        evidence=(removed_text[:200] or "(removed lines)"),
+                        explanation=explanation,
+                        taxonomy_hint="deploy:canary",
+                    )
+                )
+
+        def _numbers(pattern: str, text: str) -> list[int]:
+            return [int(m) for m in re.findall(pattern, text)]
+
+        removed_weights = _numbers(r"setWeight:\s*(\d+)", removed_text)
+        added_weights = _numbers(r"setWeight:\s*(\d+)", added_text)
+        if removed_weights and added_weights and min(added_weights) > min(removed_weights):
+            findings.append(
+                tool_finding(
+                    "canary_scan",
+                    title=f"Initial canary traffic raised "
+                    f"{min(removed_weights)}% → {min(added_weights)}%",
+                    severity="medium",
+                    file_path=file.path,
+                    line=file.added[0][0] if file.added else 1,
+                    evidence=f"setWeight: {min(added_weights)}",
+                    explanation="A larger first step exposes more users before any "
+                    "analysis has run.",
+                    confidence="likely",
+                    taxonomy_hint="deploy:canary",
+                )
+            )
+        removed_thresh = _numbers(r"(?:failureLimit|threshold):\s*(\d+)", removed_text)
+        added_thresh = _numbers(r"(?:failureLimit|threshold):\s*(\d+)", added_text)
+        if removed_thresh and added_thresh and max(added_thresh) > max(removed_thresh):
+            findings.append(
+                tool_finding(
+                    "canary_scan",
+                    title=f"Failure threshold loosened "
+                    f"{max(removed_thresh)} → {max(added_thresh)}",
+                    severity="high",
+                    file_path=file.path,
+                    line=file.added[0][0] if file.added else 1,
+                    evidence=f"threshold: {max(added_thresh)}",
+                    explanation="More failures are now tolerated before the rollout "
+                    "aborts.",
+                    confidence="likely",
+                    taxonomy_hint="deploy:canary",
+                )
+            )
+    return ToolReport(tool="canary_scan", status="ok", findings=findings)
+
+
 def workflow_scan(diff: ParsedDiff, repo_dir: str) -> ToolReport:
     findings = []
     for file in diff.files:

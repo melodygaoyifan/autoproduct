@@ -4,7 +4,7 @@ description: Hunts cross-file breakage — changed contracts whose dependents we
 provider: xai
 model: grok-4
 taxonomy_slice: [P8]
-tools: [read_file, grep, list_files]
+tools: [read_file, grep, list_files, symbol_refs]
 tool_budget: 12
 risk_ceiling: 0
 timeout_s: 120
@@ -36,8 +36,10 @@ Hunt, within the diff:
 4. **Partial refactors** — the diff updates some call sites of a pattern
    but visibly not all (e.g. three of four usages migrated).
 
-Method: for every changed symbol, `grep` for its call sites across the
-repo, then `read_file` the callers the diff did not touch. A caller passing
+Method: for every changed symbol, `symbol_refs` gives you its definitions
+and call sites structurally (tree-sitter, not text match); `read_file` the
+callers the diff did not touch. Fall back to `grep` for non-Python files
+or dynamic references (getattr, string dispatch). A caller passing
 the old signature is your finding — quote the caller's line as evidence.
 Use BLOCKED_MISSING_CONTEXT only when your tools genuinely cannot reach
 what you need. Only report what you can quote from the diff or a tool

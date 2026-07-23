@@ -23,7 +23,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from autoproduct import scoring, verify
-from autoproduct.deploy.probes import migration_scan, workflow_scan
+from autoproduct.deploy.probes import canary_scan, migration_scan, workflow_scan
 from autoproduct.diff import ParsedDiff, fetch_diff, parse_unified_diff
 from autoproduct.mirror import YamlMirror
 from autoproduct.state import Severity, VoterFinding, VoterOutput, VoterStatus
@@ -146,7 +146,11 @@ def run_deploy_review(
 
     deploy_files = detect_deploy_files(diff.changed_files)
 
-    reports = [migration_scan(diff, repo_dir), workflow_scan(diff, repo_dir)]
+    reports = [
+        migration_scan(diff, repo_dir),
+        workflow_scan(diff, repo_dir),
+        canary_scan(diff, repo_dir),
+    ]
     findings: list[VoterFinding] = [f for r in reports for f in r.findings]
     findings += _policy_violations(diff, policy)
     mirror.write(

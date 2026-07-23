@@ -107,6 +107,9 @@ def record_incident(repo_dir: str | Path, incident_id: str, incident_text: str) 
         history.append(
             {"incident_id": incident_id, "tokens": tokens, "text": incident_text[:500]}
         )
+        # Bounded (PR #12 self-review): recurrence detection only needs a
+        # recent window; skills carry the long-term memory.
+        history = history[-500:]
         path.write_text(yaml.safe_dump(history, sort_keys=False), encoding="utf-8")
     return similar
 

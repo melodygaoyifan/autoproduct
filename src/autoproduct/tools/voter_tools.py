@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-VOTER_TOOL_REGISTRY = {"read_file", "grep", "list_files"}
+VOTER_TOOL_REGISTRY = {"read_file", "grep", "list_files", "symbol_refs"}
 
 _EXCLUDED_DIRS = {".git", ".venv", "node_modules", "__pycache__", ".mas"}
 _RESULT_CHAR_CAP = 20_000
@@ -89,6 +89,11 @@ class ToolBox:
                         return "\n".join(hits) + f"\n(capped at {max_results} results)"
         return "\n".join(hits) or "(no matches)"
 
+    def _symbol_refs(self, symbol: str, max_results: int = 60) -> str:
+        from autoproduct.tools.symbols import symbol_refs
+
+        return symbol_refs(self.root, symbol, max_results=max_results)
+
     def _list_files(self, glob: str = "**/*", max_results: int = 200) -> str:
         paths = [
             str(p.relative_to(self.root)) for p in self._iter_files(glob)
@@ -110,6 +115,9 @@ Available tools and args:
 - read_file: {{path, start (default 1), limit (default 200)}} — numbered lines
 - grep: {{pattern (regex), glob (default "**/*.py"), max_results (default 50)}}
 - list_files: {{glob (default "**/*"), max_results (default 200)}}
+- symbol_refs: {{symbol, max_results (default 60)}} — tree-sitter-backed:
+  definitions, call sites, and mentions of a Python symbol across the repo
+  (prefer this over grep for signature-change impact)
 
 Tool results arrive in the next message. When you have enough evidence (or
 none of your tools would help), respond with the final status/findings YAML.
