@@ -74,6 +74,10 @@ class CaseResult(BaseModel):
     tasks_total: int = 0
     tasks_built: int = 0
     clean_reviews: int = 0
+    outcomes: list[dict] = Field(
+        default_factory=list, description="per-task forensics: status + detail"
+    )
+    preserved_workspace: str = ""
     probes: list[ProbeResult] = Field(default_factory=list)
     duration_s: float = 0.0
 
@@ -220,12 +224,29 @@ def run_case(case: ProductCase, *, provider: str | None = None) -> CaseResult:
             )
             case_probes += [Probe(name=g.name, script=g.script) for g in generated]
         probes = [run_probe(workspace, probe) for probe in case_probes]
+        preserved = ""
+        if result.status != "completed" or not all(p.passed for p in probes):
+            # Failure forensics: the temp workspace would vanish with the
+            # scoreboard's most important evidence.
+            import shutil as _shutil
+
+            keep = Path(".mas") / "product-bench" / "workspaces" / case.name
+            _shutil.rmtree(keep, ignore_errors=True)
+            keep.parent.mkdir(parents=True, exist_ok=True)
+            _shutil.copytree(workspace, keep, ignore=_shutil.ignore_patterns(".probe-venv"))
+            preserved = str(keep)
         return CaseResult(
             name=case.name,
             autopilot_status=result.status,
             tasks_total=len(result.outcomes),
             tasks_built=len(built),
             clean_reviews=len(clean),
+            outcomes=[
+                {"task_id": o.task_id, "title": o.title, "status": o.status,
+                 "review": o.review_verdict, "detail": o.detail[:200]}
+                for o in result.outcomes
+            ],
+            preserved_workspace=preserved,
             probes=probes,
             duration_s=round(time.monotonic() - start, 1),
         )

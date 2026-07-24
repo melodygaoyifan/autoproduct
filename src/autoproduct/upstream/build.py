@@ -83,7 +83,9 @@ def _run_tests(repo: Path):
 def _write_files(
     repo: Path, files: list[dict], *, allowed_test_paths: set[str] | None = None
 ) -> list[str]:
-    written = []
+    """Two-pass: validate EVERY file first, then write — a refusal never
+    leaves partial state behind."""
+    validated: list[tuple[str, str]] = []
     for f in files[:_MAX_FILES]:
         rel = str(f["path"]).lstrip("/")
         if any(rel.startswith(p) for p in _FORBIDDEN_PREFIXES) or ".." in rel:
@@ -119,6 +121,10 @@ def _write_files(
                 )
         if len(content.splitlines()) > _MAX_FILE_LINES:
             raise ValueError(f"{rel} exceeds {_MAX_FILE_LINES} lines")
+        validated.append((rel, content))
+
+    written = []
+    for rel, content in validated:
         target = repo / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
@@ -318,11 +324,28 @@ def _run_build_inner(
                 repo, data.get("files") or [], allowed_test_paths=allowed_tests
             )
         except ValueError as exc:
-            return BuildResult(slug=slug, status="error", iterations=iteration, detail=str(exc))
-        if not written:
-            return BuildResult(
-                slug=slug, status="error", iterations=iteration, detail="implementer returned no files"
+            # A refused write (read-only test, weakened assert, unparseable
+            # output) is FEEDBACK, not a fatal error — real implementers
+            # routinely re-emit existing test files, and the instant-error
+            # version collapsed both real bench cases to 1/7 tasks built.
+            # Structural walls stay: nothing was written; the model gets
+            # the wall's text and a bounded retry.
+            if iteration == MAX_ITERATIONS:
+                return BuildResult(slug=slug, status="error", iterations=iteration, detail=str(exc))
+            feedback = (
+                f"WRITE REFUSED: {exc}. Resubmit ALL your files WITHOUT the "
+                "refused change — existing tests are read-only walls, not "
+                "suggestions."
             )
+            continue
+        if not written:
+            if iteration == MAX_ITERATIONS:
+                return BuildResult(
+                    slug=slug, status="error", iterations=iteration,
+                    detail="implementer returned no files",
+                )
+            feedback = "you returned no files; return the complete file set"
+            continue
         from autoproduct.testing import combine_reports, run_js_tests
 
         report = combine_reports(_run_tests(repo), run_js_tests(repo))

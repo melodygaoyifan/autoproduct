@@ -49,6 +49,69 @@ def test_weakened_skeleton_rejected_at_write(tmp_path):
         )
 
 
+def test_refused_write_is_atomic(tmp_path):
+    """Two-pass write: a refusal mid-list leaves NOTHING written."""
+    from autoproduct.upstream.build import _write_files
+
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_old.py").write_text("def test_a():\n    assert True\n")
+    with pytest.raises(ValueError, match="read-only"):
+        _write_files(
+            tmp_path,
+            [
+                {"path": "good.py", "new_content": "x = 1\n"},
+                {"path": "tests/test_old.py", "new_content": "def test_a():\n    pass\n"},
+            ],
+            allowed_test_paths=set(),
+        )
+    assert not (tmp_path / "good.py").exists()
+
+
+def test_build_retries_after_refused_write(tmp_path):
+    """The write-lock is a wall WITH feedback, not a fatal error — the
+    instant-error version collapsed both real bench cases to 1/7 tasks."""
+    import yaml as yaml_lib
+
+    from autoproduct.providers.base import Provider, register
+    from autoproduct.upstream import approve_spec, run_build
+
+    @register
+    class LockBumper(Provider):
+        name = "lock_bumper"
+        calls = {"n": 0}
+
+        def chat(self, *, model, system, messages, max_tokens=4096):
+            from autoproduct.providers.mock import MockProvider
+
+            if "single-writer implementer" not in system:
+                return MockProvider().chat(model=model, system=system, messages=messages)
+            LockBumper.calls["n"] += 1
+            files = [{"path": "feature2.py", "new_content": "VALUE = 2\n"},
+                     {"path": "tests/test_feature2.py",
+                      "new_content": "from feature2 import VALUE\n\n"
+                                     "def test_v():\n    assert VALUE == 2\n"}]
+            if LockBumper.calls["n"] == 1 and "WRITE REFUSED" not in messages[0]["content"]:
+                # First attempt: touches the pre-existing read-only test.
+                files.append({"path": "tests/test_prior.py",
+                              "new_content": "def test_p():\n    pass\n"})
+            return yaml_lib.safe_dump({"files": files, "notes": "ok"}, sort_keys=False)
+
+    LockBumper.calls["n"] = 0
+    root = init_workspace(tmp_path / "p", "p", "web")
+    (root / "tests").mkdir(exist_ok=True)
+    (root / "tests" / "test_prior.py").write_text("def test_p():\n    assert True\n")
+    import subprocess
+
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    spec = run_spec_stage(root, "an item store API (task:f2)", provider="mock")
+    approve_spec(root, spec.slug)
+    # Force the spec's skeletons aside so LockBumper's files drive the gate.
+    result = run_build(root, spec.slug, provider="lock_bumper")
+    assert result.status == "built", result.detail
+    assert result.iterations == 2  # refused once, informed retry succeeded
+    assert (root / "tests" / "test_prior.py").read_text().endswith("assert True\n")
+
+
 # --- lane_check / budget_check ----------------------------------------------
 
 def test_lane_collision_detected():
