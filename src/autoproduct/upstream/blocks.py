@@ -20,6 +20,22 @@ _KEYWORDS = {
     "miniprogram/subscribe.js": {"通知", "提醒", "订阅", "消息", "notify", "subscribe"},
 }
 
+# Richer descriptions feed the paraphrase-tolerant matcher: an FDR that
+# says 充值/结账/收银 must still surface wxpay even though no _KEYWORDS
+# term appears verbatim.
+_DESCRIPTIONS = {
+    "web/auth.py": "用户登录注册账号密码校验会话 session 管理 user login "
+    "register password authentication sign in sign up credentials",
+    "miniprogram/wxlogin.js": "微信登录授权获取用户身份 openid 一键登录 "
+    "wechat login authorize identity profile",
+    "miniprogram/wxpay.js": "微信支付付款收款下单结账收银充值退款金额订单 "
+    "wechat pay payment checkout charge refund order money price",
+    "miniprogram/subscribe.js": "订阅消息通知提醒推送模板消息 subscribe "
+    "notification remind push message alert",
+}
+
+_MIN_SIMILARITY = 0.08
+
 
 def list_blocks(profile: str) -> list[str]:
     prefix = "web/" if profile == "web" else f"{profile}/"
@@ -27,11 +43,19 @@ def list_blocks(profile: str) -> list[str]:
 
 
 def matching_blocks(profile: str, text: str) -> list[str]:
+    """Exact keyword hits when the FDR names the capability (precision);
+    similarity ranking over block descriptions as the FALLBACK for
+    paraphrases the keyword set misses (充值/收银 → wxpay) — dependency-
+    free, see autoproduct.similarity."""
+    blocks = list_blocks(profile)
     lowered = text.lower()
-    return [
-        rel for rel in list_blocks(profile)
-        if any(kw in lowered for kw in _KEYWORDS[rel])
-    ]
+    exact = [rel for rel in blocks if any(kw in lowered for kw in _KEYWORDS[rel])]
+    if exact:
+        return exact
+    from autoproduct.similarity import rank
+
+    ranked = rank(text, [_DESCRIPTIONS[rel] for rel in blocks])
+    return [blocks[i] for i, score in ranked if score >= _MIN_SIMILARITY]
 
 
 def blocks_context(profile: str, text: str, cap: int = 2) -> str:

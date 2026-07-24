@@ -377,6 +377,25 @@ def serve(
 
 
 @app.command()
+def worker(
+    repo_dir: str = typer.Option(".", help="Repository the worker operates on"),
+    queue_db: str = typer.Option(
+        ".mas/queue.db", help="SQLite queue (same path the server enqueues to)"
+    ),
+    max_jobs: int = typer.Option(
+        0, help="Exit after N jobs (0 = run forever); nonzero also exits when idle"
+    ),
+):
+    """Queue worker: drains jobs the server enqueued when
+    AUTOPRODUCT_QUEUE_DB is set. Run several for parallel throughput on
+    one host; multi-host needs a shared broker (see jobqueue docstring)."""
+    from autoproduct.jobqueue import worker_loop
+
+    done = worker_loop(queue_db, repo_dir, max_jobs=max_jobs or None)
+    console.print(f"worker exited after {done} job(s)")
+
+
+@app.command()
 def init(
     directory: str = typer.Argument(..., help="Workspace directory to create"),
     name: str = typer.Option(None, help="Project name (defaults to directory name)"),

@@ -70,13 +70,23 @@ def _reconcile_jobs(repo_dir: str) -> list[dict]:
 
 
 def _spawn(args: list[str], repo_dir: str) -> int:
-    """Detached worker: the request cycle never blocks on a review.
+    """Dispatch work. Two modes:
 
-    Deliberate exception to the subprocess timeout/capture convention: a
-    worker outlives the request by design (reviews take minutes), its
-    output lands in the `.mas/` mirrors, and its lifecycle belongs to the
-    OS — a timeout here would kill in-flight reviews.
+    - AUTOPRODUCT_QUEUE_DB set → enqueue into the SQLite job queue; any
+      number of `autoproduct worker` processes drain it (multi-instance,
+      burst-safe, restart-surviving). Returns the negated job id so
+      callers can tell a queue ticket from a pid.
+    - default → detached worker subprocess: the request cycle never
+      blocks on a review. Deliberate exception to the subprocess
+      timeout/capture convention: a worker outlives the request by
+      design, its output lands in the `.mas/` mirrors, and its lifecycle
+      belongs to the OS.
     """
+    queue_db = os.environ.get("AUTOPRODUCT_QUEUE_DB", "")
+    if queue_db:
+        from autoproduct.jobqueue import enqueue
+
+        return -enqueue(queue_db, args[0], args)
     proc = subprocess.Popen(  # noqa: S603 — fixed argv, no shell
         [sys.executable, "-m", "autoproduct.cli", *args],
         cwd=repo_dir,

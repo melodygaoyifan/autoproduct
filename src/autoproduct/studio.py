@@ -253,9 +253,15 @@ def create_studio_app(
         (root / "FDR.md").write_text(str(form.get("fdr", "")), encoding="utf-8")
         for stale in ("FDR-QUESTIONS.md",):
             (root / stale).unlink(missing_ok=True)
+        from starlette.concurrency import run_in_threadpool
+
         from autoproduct.upstream.autopilot import run_autopilot
 
-        run_autopilot(root, root / "FDR.md", yes=False, provider=provider)
+        # LLM calls block for minutes — off the event loop (sweep finding),
+        # or the progress page can't even poll while the assessor runs.
+        await run_in_threadpool(
+            run_autopilot, root, root / "FDR.md", yes=False, provider=provider
+        )
         return RedirectResponse("/", status_code=303)
 
     @app.get("/acceptance", response_class=HTMLResponse)
@@ -280,9 +286,13 @@ def create_studio_app(
         form = await request.form()
         complaint = str(form.get("complaint", "")).strip()
         if complaint:
+            from starlette.concurrency import run_in_threadpool
+
             from autoproduct.upstream.correction import run_correction
 
-            result = run_correction(root, complaint, provider=provider)
+            result = await run_in_threadpool(
+                run_correction, root, complaint, provider=provider
+            )
             (root / "product" / "CORRECTION-LOG.md").open("a", encoding="utf-8").write(
                 f"- {result.status}: {complaint[:120]} → {result.detail}\n"
             )
@@ -316,9 +326,13 @@ def create_studio_app(
         if fdr_text:
             fdr_path = root / ".mas" / "pending-feature.md"
             fdr_path.write_text(fdr_text, encoding="utf-8")
+            from starlette.concurrency import run_in_threadpool
+
             from autoproduct.upstream.autopilot import run_feature
 
-            run_feature(root, fdr_path, provider=provider, yes=False)
+            await run_in_threadpool(
+                run_feature, root, fdr_path, provider=provider, yes=False
+            )
         return RedirectResponse("/", status_code=303)
 
     @app.post("/feature/build")
