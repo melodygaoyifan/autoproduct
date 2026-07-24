@@ -134,6 +134,50 @@ def services_context(repo_dir: str | Path) -> str:
     return "Available services (read config from env, never hardcode):\n" + "\n".join(lines)
 
 
+def auto_provision_cloud(repo_dir: str | Path, profile: str) -> dict:
+    """Cloud AUTO-provisioning driver — gated on the platform CLI being
+    installed and authenticated (Supabase for web today). Absent tooling
+    degrades to the guided SERVICES.md path, visibly. 微信云开发 has no
+    public provisioning CLI: guided-only by platform constraint."""
+    import json
+    import shutil
+    import subprocess
+
+    root = Path(repo_dir).resolve()
+    if profile != "web":
+        return {"status": "guided_only",
+                "detail": "此平台没有公开的自动开通接口，请按 SERVICES.md 手动开通"}
+    if not shutil.which("supabase"):
+        return {"status": "unavailable",
+                "detail": "supabase CLI not installed (brew install supabase/tap/supabase) "
+                "— guided path in SERVICES.md still works"}
+    projects = subprocess.run(
+        ["supabase", "projects", "list", "--output", "json"],
+        capture_output=True, text=True, timeout=60,
+    )
+    if projects.returncode != 0:
+        return {"status": "unavailable",
+                "detail": "supabase CLI not logged in (supabase login)"}
+    created = subprocess.run(
+        ["supabase", "projects", "create", root.name, "--output", "json"],
+        capture_output=True, text=True, timeout=300,
+    )
+    if created.returncode != 0:
+        return {"status": "error",
+                "detail": (created.stderr or created.stdout)[-200:]}
+    info = json.loads(created.stdout or "{}")
+    secrets_path = root / ".mas" / "secrets.yaml"
+    secrets = yaml.safe_load(secrets_path.read_text(encoding="utf-8")) if secrets_path.exists() else {}
+    secrets = secrets or {}
+    if info.get("database", {}).get("host"):
+        secrets["DATABASE_URL"] = (
+            f"postgresql://postgres@{info['database']['host']}:5432/postgres"
+        )
+    secrets_path.write_text(yaml.safe_dump(secrets, sort_keys=False), encoding="utf-8")
+    return {"status": "provisioned", "detail": f"supabase project {info.get('id', root.name)}; "
+            "finish the connection string password in .mas/secrets.yaml"}
+
+
 def preview_env(repo_dir: str | Path) -> dict[str, str]:
     """Env injected when running the product: local paths + any secrets."""
     root = Path(repo_dir).resolve()

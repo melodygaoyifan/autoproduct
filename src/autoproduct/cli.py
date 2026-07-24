@@ -696,14 +696,26 @@ def scr_approve(
 
 
 @app.command()
-def ship(repo_dir: str = typer.Option(".", help="Workspace directory")):
+def ship(
+    repo_dir: str = typer.Option(".", help="Workspace directory"),
+    push: bool = typer.Option(
+        False, "--push",
+        help="Web only: actually deploy via Railway (requires railway login; "
+        "this flag IS your deploy decision)",
+    ),
+):
     """Generate deployment artifacts + a plain-language DEPLOY.md. The
-    deploy button stays yours — the system never pushes to production."""
-    from autoproduct.upstream.ship import ship as run_ship
+    deploy button stays yours — --push is you pressing it."""
+    from autoproduct.upstream.ship import push_web, ship as run_ship
 
     guide = run_ship(repo_dir)
     console.print(f"部署指南已生成 / deploy guide written: {guide}")
-    console.print((guide.parent / "Dockerfile").exists() and "Dockerfile ready" or "")
+    if push:
+        result = push_web(repo_dir)
+        color = {"deployed": "green"}.get(result["status"], "yellow")
+        console.print(f"[bold {color}]{result['status']}[/bold {color}] — {result['detail']}")
+        if result["status"] == "error":
+            raise typer.Exit(code=1)
 
 
 @app.command("product-bench")
@@ -848,6 +860,31 @@ def verify(
     path = verify_product(repo_dir, provider=provider)
     console.print(path.read_text(encoding="utf-8"))
     console.print(f"saved: {path}")
+
+
+@app.command("setup-tests")
+def setup_tests(repo_dir: str = typer.Option(".", help="Workspace directory")):
+    """小程序: install jest + miniprogram-simulate so page-level tests run
+    in the build/test gates (npm required)."""
+    from autoproduct.upstream.ship import setup_miniprogram_tests
+
+    result = setup_miniprogram_tests(repo_dir)
+    color = {"ready": "green"}.get(result["status"], "yellow")
+    console.print(f"[bold {color}]{result['status']}[/bold {color}] — {result['detail']}")
+
+
+@app.command("services-cloud")
+def services_cloud(repo_dir: str = typer.Option(".", help="Workspace directory")):
+    """Attempt cloud AUTO-provisioning (Supabase CLI, gated on login);
+    degrades to the guided SERVICES.md path when tooling is absent."""
+    from autoproduct.upstream import load_project
+    from autoproduct.upstream.provisioning import auto_provision_cloud, write_cloud_guide
+
+    profile = load_project(repo_dir).profile
+    write_cloud_guide(repo_dir, profile)
+    result = auto_provision_cloud(repo_dir, profile)
+    color = {"provisioned": "green"}.get(result["status"], "yellow")
+    console.print(f"[bold {color}]{result['status']}[/bold {color}] — {result['detail']}")
 
 
 def main() -> None:

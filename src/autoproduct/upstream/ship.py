@@ -41,6 +41,37 @@ def ship(repo_dir: str | Path) -> Path:
     return _ship_web(root)
 
 
+def push_web(repo_dir: str | Path) -> dict:
+    """One-command deploy (web → Railway), triple-gated: CLI installed,
+    account logged in, and the founder explicitly asked (--push). The
+    system still never deploys on its own initiative."""
+    import subprocess
+
+    root = Path(repo_dir).resolve()
+    if not shutil.which("railway"):
+        return {"status": "unavailable",
+                "detail": "railway CLI not installed (npm i -g @railway/cli 或 brew install railway)"}
+    who = subprocess.run(["railway", "whoami"], capture_output=True, text=True, timeout=30)
+    if who.returncode != 0:
+        return {"status": "unavailable", "detail": "railway not logged in (run: railway login)"}
+    _ship_web(root)  # ensure Dockerfile + guide exist
+    if not (root / "railway.json").exists() and not (root / ".railway").exists():
+        init = subprocess.run(
+            ["railway", "init", "--name", root.name],
+            cwd=root, capture_output=True, text=True, timeout=120,
+        )
+        if init.returncode != 0:
+            return {"status": "error", "detail": f"railway init failed: {(init.stderr or init.stdout)[:200]}"}
+    up = subprocess.run(
+        ["railway", "up", "--detach"],
+        cwd=root, capture_output=True, text=True, timeout=600,
+    )
+    if up.returncode != 0:
+        return {"status": "error", "detail": f"railway up failed: {(up.stderr or up.stdout)[:300]}"}
+    output = (up.stdout or "").strip()
+    return {"status": "deployed", "detail": output[-300:] or "uploaded; check railway dashboard"}
+
+
 def _ship_web(root: Path) -> Path:
     entry = _web_entry(root) or "app/main.py"
     (root / "Dockerfile").write_text(_DOCKERFILE.format(entry=entry), encoding="utf-8")
@@ -71,6 +102,51 @@ def _ship_web(root: Path) -> Path:
         encoding="utf-8",
     )
     return guide
+
+
+def setup_miniprogram_tests(repo_dir: str | Path) -> dict:
+    """Page-level 小程序 testing: scaffolds miniprogram-simulate + jest so
+    the existing npm-test gate covers pages, not just pure-logic modules.
+    Availability-gated on npm; install failure is a visible note."""
+    import json
+    import subprocess
+
+    root = Path(repo_dir).resolve()
+    if not shutil.which("npm"):
+        return {"status": "unavailable", "detail": "npm not installed"}
+    package = root / "package.json"
+    data = json.loads(package.read_text(encoding="utf-8")) if package.exists() else {}
+    data.setdefault("name", root.name)
+    data.setdefault("version", "1.0.0")
+    data.setdefault("scripts", {})["test"] = "jest"
+    data.setdefault("devDependencies", {}).update(
+        {"jest": "^29", "jest-environment-jsdom": "^29", "miniprogram-simulate": "^1"}
+    )
+    data["jest"] = {"testEnvironment": "jsdom",
+                    "testMatch": ["**/*.test.js"], "transform": {}}
+    package.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    sample = root / "tests" / "pages.test.js"
+    if not sample.exists():
+        sample.parent.mkdir(exist_ok=True)
+        sample.write_text(
+            "// 页面级测试样例：用 miniprogram-simulate 挂载组件/页面\n"
+            "// const simulate = require('miniprogram-simulate')\n"
+            "test('placeholder page test scaffold', () => {\n"
+            "  expect(1 + 1).toBe(2)\n"
+            "})\n",
+            encoding="utf-8",
+        )
+    install = subprocess.run(
+        ["npm", "install", "--no-audit", "--no-fund", "--loglevel=error"],
+        cwd=root, capture_output=True, text=True, timeout=600,
+    )
+    if install.returncode != 0:
+        return {"status": "error",
+                "detail": f"npm install failed: {(install.stderr or install.stdout)[-200:]}"}
+    return {"status": "ready",
+            "detail": "jest + miniprogram-simulate installed; `npm test` now "
+            "runs in the build/test gates; write page tests in tests/*.test.js"}
 
 
 def _ship_miniprogram(root: Path) -> Path:
