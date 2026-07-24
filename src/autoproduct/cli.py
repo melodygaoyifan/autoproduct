@@ -836,6 +836,20 @@ def undo(repo_dir: str = typer.Option(".", help="Workspace directory")):
         raise typer.Exit(code=1)
 
 
+@app.command()
+def verify(
+    repo_dir: str = typer.Option(".", help="Workspace directory"),
+    provider: str = typer.Option("anthropic", help="Provider"),
+):
+    """Auto-verify the built product against YOUR FDR: probes are generated
+    from what you asked for and run against what was built."""
+    from autoproduct.upstream.probegen import verify_product
+
+    path = verify_product(repo_dir, provider=provider)
+    console.print(path.read_text(encoding="utf-8"))
+    console.print(f"saved: {path}")
+
+
 def main() -> None:
     sys.exit(app())
 

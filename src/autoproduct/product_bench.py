@@ -50,7 +50,16 @@ class ProductCase(BaseModel):
         default_factory=list,
         description="granular follow-up FDRs applied via the feature flow",
     )
-    probes: list[Probe] = Field(min_length=1)
+    probes: list[Probe] = Field(default_factory=list)
+    auto_probes: bool = Field(
+        default=False,
+        description="generate probes from the FDR against the built product "
+        "(the real-user path) instead of hand-written fixtures",
+    )
+
+    def model_post_init(self, _ctx) -> None:
+        if not self.probes and not self.auto_probes:
+            raise ValueError("case needs probes or auto_probes: true")
 
 
 class ProbeResult(BaseModel):
@@ -202,7 +211,15 @@ def run_case(case: ProductCase, *, provider: str | None = None) -> CaseResult:
             o for o in built
             if o.review_verdict in ("APPROVE", "APPROVE_WITH_NOTES")
         ]
-        probes = [run_probe(workspace, probe) for probe in case.probes]
+        case_probes = list(case.probes)
+        if case.auto_probes:
+            from autoproduct.upstream.probegen import generate_probes
+
+            generated, _ = generate_probes(
+                workspace, provider=provider or "anthropic"
+            )
+            case_probes += [Probe(name=g.name, script=g.script) for g in generated]
+        probes = [run_probe(workspace, probe) for probe in case_probes]
         return CaseResult(
             name=case.name,
             autopilot_status=result.status,

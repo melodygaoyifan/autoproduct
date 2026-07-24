@@ -262,6 +262,15 @@ def _post_build_artifacts(
         generate_walkthrough(
             root, provider=provider, model=model, language_sample=fdr_text
         )
+        # Auto-verification from the founder's own PRD — probes generated
+        # against what was actually built, never hand-setup fixtures.
+        has_entry = any(
+            (root / e).exists() for e in ("app/main.py", "main.py", "app.py")
+        )
+        if profile == "web" and has_entry:
+            from autoproduct.upstream.probegen import verify_product
+
+            verify_product(root, provider=provider, model=model)
         from autoproduct.upstream.screenshots import capture
 
         shots = capture(root, profile)

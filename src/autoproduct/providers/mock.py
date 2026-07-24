@@ -106,6 +106,18 @@ class MockProvider(Provider):
             return "(mock: not a checklist)"  # forces the deterministic fallback
         if DIGEST_MARKER in system:
             return "# 本周 mock digest\n用户做了一些事。"
+        from autoproduct.upstream.probegen import PROBEGEN_MARKER
+
+        if PROBEGEN_MARKER in system:
+            return yaml.safe_dump(
+                {"probes": [
+                    {"name": "root-responds",
+                     "body": 's, d, _ = call("GET", "/")\n'
+                             'assert s < 500, f"root returned {s}"'},
+                    {"name": "bad-body-dropped", "body": "this is not python ("},
+                ]},
+                sort_keys=False,
+            )
         from autoproduct.upstream.discover import BRIEF_CRITIC_MARKER, BRIEFWRITER_MARKER
         from autoproduct.upstream.plan import PLAN_CRITIC_MARKER, PLANNER_MARKER
 
