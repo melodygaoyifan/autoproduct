@@ -2,7 +2,7 @@
 name: deploy_config
 description: Reviews CI/CD and infrastructure config changes for blast-radius and trust-boundary risks
 provider: openai
-model: gpt-5.4
+model: gpt-5
 taxonomy_slice: []
 tools: [read_file, grep]
 risk_ceiling: 0

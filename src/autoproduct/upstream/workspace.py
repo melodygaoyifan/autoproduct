@@ -65,7 +65,11 @@ def init_workspace(directory: str | Path, name: str, profile: str) -> Path:
     )
     gitignore = root / ".gitignore"
     if not gitignore.exists():
-        gitignore.write_text(".mas/\n__pycache__/\n.venv/\nnode_modules/\n")
+        gitignore.write_text(
+            ".mas/\n__pycache__/\n.venv/\nnode_modules/\n"
+            # API keys stay in the founder's environment, never in git.
+            ".env\n.env.*\n"
+        )
 
     _write_design_baseline(root, profile)
 

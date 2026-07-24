@@ -2,7 +2,7 @@
 name: security
 description: Hunts vulnerabilities and, above all, the safety-removal meta-pattern
 provider: openai
-model: gpt-5.4
+model: gpt-5
 taxonomy_slice: [P6]
 tools: [read_file, grep]
 risk_ceiling: 0

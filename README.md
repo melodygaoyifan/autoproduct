@@ -98,8 +98,14 @@ auto-merges, nothing deploys to production autonomously.
 | `worker` | queue worker — set `AUTOPRODUCT_QUEUE_DB` on `serve` and run N workers to drain bursts in parallel (SQLite, one host; multi-host needs a shared broker) |
 | `bench` · `product-bench` · `compound --pr` | the two benchmarks + the compounding loop |
 
-Setup: `uv sync`, `ANTHROPIC_API_KEY` (other provider keys optional —
-voter specs declare per-family models with visible fallback), `gh` auth,
+Setup: `uv sync`, `ANTHROPIC_API_KEY` (yours — keys live only in your
+environment, are never written to the workspace or git, and every
+provider errors loudly if its key is missing). `OPENAI_API_KEY` optional
+but recommended: it puts a real GPT-5 in the security and deploy-config
+voter seats, breaking same-family self-preference when Claude reviews
+Claude-written code; without it those seats visibly fall back
+(`substituted_from`). `GEMINI_API_KEY`/`XAI_API_KEY` optional likewise.
+`gh` auth,
 Docker optional (network-isolated test sandbox), Node optional (JS test
 gate). Operations guide: [RUNBOOK.md](RUNBOOK.md).
 
