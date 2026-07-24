@@ -756,6 +756,86 @@ def recover(repo_dir: str = typer.Option(".", help="Repository the reviews ran i
                       + (f" → {r.get('verdict')}" if r.get("verdict") else ""))
 
 
+@app.command()
+def correct(
+    complaint: str = typer.Argument(..., help="What's wrong, in your own words"),
+    repo_dir: str = typer.Option(".", help="Workspace directory"),
+    provider: str = typer.Option("anthropic", help="Provider (e.g. 'mock')"),
+):
+    """M3 — 这不是我要的: repairs go through the fix path, scope changes
+    raise an SCR (your complaint IS the approval, recorded verbatim)."""
+    from autoproduct.upstream.correction import run_correction
+
+    result = run_correction(repo_dir, complaint, provider=provider)
+    color = {"fixed": "green", "scr_raised": "yellow"}.get(result.status, "red")
+    console.print(f"[bold {color}]{result.status}[/bold {color}] — {result.detail}")
+    if result.status == "error":
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def walkthrough(
+    repo_dir: str = typer.Option(".", help="Workspace directory"),
+    provider: str = typer.Option("anthropic", help="Provider"),
+):
+    """M4 — regenerate the 验收清单 (product/ACCEPTANCE.md)."""
+    from autoproduct.upstream.walkthrough import generate_walkthrough
+
+    console.print(f"written: {generate_walkthrough(repo_dir, provider=provider)}")
+
+
+@app.command()
+def digest(
+    repo_dir: str = typer.Option(".", help="Workspace directory"),
+    provider: str = typer.Option("anthropic", help="Provider"),
+    days: int = typer.Option(7, help="Window"),
+):
+    """M5 — weekly plain-language digest from the product's own telemetry;
+    reconciles the hypothesis ledger with observed events."""
+    from autoproduct.upstream.telemetry import generate_digest
+
+    console.print(f"written: {generate_digest(repo_dir, provider=provider, days=days)}")
+
+
+@app.command("retry-task")
+def retry_task(
+    task_id: str = typer.Argument(..., help="Failed task id from the report"),
+    repo_dir: str = typer.Option(".", help="Workspace directory"),
+    provider: str = typer.Option("anthropic", help="Provider"),
+):
+    """M7 — retry ONE failed module without rebuilding anything else."""
+    from autoproduct.upstream import approve_spec, run_build, run_spec_stage
+    from autoproduct.upstream.plan import load_plan
+
+    plan_result = load_plan(repo_dir)
+    task = next((t for t in plan_result.tasks if t.id == task_id), None)
+    if task is None:
+        console.print(f"[red]no task {task_id!r} in the plan[/red]")
+        raise typer.Exit(code=1)
+    spec = run_spec_stage(repo_dir, f"{task.description} (task:{task.id})", provider=provider)
+    if spec.status != "proposed":
+        console.print(f"[red]spec blocked: {spec.lint_issues}[/red]")
+        raise typer.Exit(code=1)
+    approve_spec(repo_dir, spec.slug)
+    result = run_build(repo_dir, spec.slug, provider=provider,
+                       task_lane=task.lane, task_estimate_hours=task.estimate_hours)
+    color = "green" if result.status == "built" else "red"
+    console.print(f"[bold {color}]{result.status}[/bold {color}] {result.detail}")
+    if result.status != "built":
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def undo(repo_dir: str = typer.Option(".", help="Workspace directory")):
+    """M7 — 回到上一个版本 (a rescue branch keeps even undo undoable)."""
+    from autoproduct.upstream.autopilot import undo_last
+
+    result = undo_last(Path(repo_dir).resolve())
+    console.print(f"{result['status']}: {result.get('detail') or result.get('restored_to', '')}")
+    if result["status"] == "error":
+        raise typer.Exit(code=1)
+
+
 def main() -> None:
     sys.exit(app())
 

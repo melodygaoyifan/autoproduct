@@ -93,6 +93,7 @@ def run_autopilot(
 
     auto_approvals: list[str] = []
     brief = run_discovery(root, fdr_text, provider=provider)
+    estimate = estimate_hint(root, len(brief.scope_now))
     confirmation = provider_impl.complete(
         model=model,
         system=_CONFIRM_SYSTEM,
@@ -100,9 +101,11 @@ def run_autopilot(
             brief.model_dump(include={"title", "scope_now", "scope_later", "scope_never", "success_metrics"}),
             sort_keys=False, allow_unicode=True,
         )
+        + f"\n预计/estimate: {estimate}\n"
         + f"\n<fdr_language_sample>\n{fdr_text[:400]}\n</fdr_language_sample>",
         max_tokens=1024,
     )
+    confirmation += f"\n\n---\n{estimate}\n"
     (root / "product").mkdir(exist_ok=True)
     (root / "product" / "CONFIRMATION.md").write_text(confirmation, encoding="utf-8")
     if not yes:
@@ -202,14 +205,113 @@ def run_autopilot(
     report_path.write_text(report, encoding="utf-8")
 
     built_count = sum(1 for o in outcomes if o.status == "built")
+    status = "completed" if built_count == len(outcomes) and outcomes else "failed"
+    _post_build_artifacts(
+        root, provider=provider, model=model, fdr_text=fdr_text,
+        outcomes=outcomes, status=status,
+    )
     return AutopilotResult(
-        status="completed" if built_count == len(outcomes) and outcomes else "failed",
+        status=status,
         assessment=assessment,
         confirmation=confirmation,
         outcomes=outcomes,
         report_path=str(report_path),
         auto_approvals=auto_approvals,
     )
+
+
+def estimate_hint(root: Path, item_count: int) -> str:
+    """M7: honest expectation-setting from recorded actuals when they
+    exist, defaults when they don't."""
+    per_task_min = 10
+    estimates_path = root / ".mas" / "estimates.yaml"
+    if estimates_path.exists():
+        history = yaml.safe_load(estimates_path.read_text(encoding="utf-8")) or []
+        if len(history) >= 3:
+            import statistics
+
+            per_task_min = max(3, int(statistics.median(
+                e["actual_seconds"] for e in history) / 60) or per_task_min)
+    n = max(item_count, 1)
+    return (
+        f"预计约 {n}–{n + 3} 个模块，每个 {per_task_min}–{per_task_min * 3} 分钟，"
+        f"部分模块可能失败并可单独重试。"
+        f" / Roughly {n}–{n + 3} modules at {per_task_min}–{per_task_min * 3} min "
+        "each; individual modules may fail and can be retried alone."
+    )
+
+
+def _post_build_artifacts(
+    root: Path, *, provider: str, model: str, fdr_text: str, outcomes, status: str
+) -> None:
+    """M2/M4/M5/M7 wiring: outcomes record (retry UX), screenshots,
+    acceptance walkthrough, telemetry module, undo checkpoint."""
+    (root / "product").mkdir(exist_ok=True)
+    (root / "product" / "outcomes.yaml").write_text(
+        yaml.safe_dump([o.model_dump() for o in outcomes], sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    try:
+        from autoproduct.upstream.telemetry import install_telemetry
+        from autoproduct.upstream.workspace import load_project
+
+        profile = load_project(root).profile
+        install_telemetry(root, profile)
+        from autoproduct.upstream.walkthrough import generate_walkthrough
+
+        generate_walkthrough(
+            root, provider=provider, model=model, language_sample=fdr_text
+        )
+        from autoproduct.upstream.screenshots import capture
+
+        shots = capture(root, profile)
+        if shots.captured or shots.note:
+            (root / "product" / "screenshots.yaml").write_text(
+                yaml.safe_dump(shots.model_dump(), sort_keys=False, allow_unicode=True),
+                encoding="utf-8",
+            )
+    except Exception:  # noqa: BLE001 — artifacts never fail the build
+        pass
+    if status == "completed":
+        tag_checkpoint(root)
+
+
+def tag_checkpoint(root: Path) -> str:
+    """M7 undo: every completed build/feature gets a checkpoint tag."""
+    import subprocess
+
+    existing = subprocess.run(
+        ["git", "tag", "--list", "ap-checkpoint-*"], cwd=root,
+        capture_output=True, text=True,
+    ).stdout.split()
+    name = f"ap-checkpoint-{len(existing) + 1:03d}"
+    subprocess.run(["git", "tag", name], cwd=root, capture_output=True)
+    return name
+
+
+def undo_last(root: Path) -> dict:
+    """M7: 回到上一个版本 — resets to the previous checkpoint after saving
+    a rescue branch, so even undo is undoable."""
+    import subprocess
+    import time as _time
+
+    tags = subprocess.run(
+        ["git", "tag", "--list", "ap-checkpoint-*", "--sort=version:refname"],
+        cwd=root, capture_output=True, text=True,
+    ).stdout.split()
+    if len(tags) < 2:
+        return {"status": "nothing_to_undo",
+                "detail": "只有一个版本，暂时没有可回退的更早版本。"}
+    rescue = f"rescue/{int(_time.time())}"
+    subprocess.run(["git", "branch", rescue], cwd=root, capture_output=True)
+    target = tags[-2]
+    reset = subprocess.run(
+        ["git", "reset", "--hard", target], cwd=root, capture_output=True, text=True
+    )
+    if reset.returncode != 0:
+        return {"status": "error", "detail": reset.stderr[:200]}
+    subprocess.run(["git", "tag", "-d", tags[-1]], cwd=root, capture_output=True)
+    return {"status": "undone", "restored_to": target, "rescue_branch": rescue}
 
 
 def _review_head(root: Path, provider: str):
@@ -355,10 +457,15 @@ def run_feature(
     from autoproduct.upstream.plan import blast_radius
 
     radius = blast_radius(root, fdr_text)
+    from autoproduct.upstream.blocks import catalog_summary
+    from autoproduct.upstream.workspace import load_project as _lp2
+
+    blocks_note = catalog_summary(_lp2(root).profile)
     raw = provider_impl.complete(
         model=model,
         system=_FEATURE_PLANNER_SYSTEM,
-        user=f"<existing_tree>\n{_file_tree(root)}\n</existing_tree>\n\n"
+        user=(f"<blocks>\n{blocks_note}\n</blocks>\n\n" if blocks_note else "")
+        + f"<existing_tree>\n{_file_tree(root)}\n</existing_tree>\n\n"
         f"<likely_touched_files>\n"
         + ("\n".join(f"- {p}" for p in radius) or "(none matched)")
         + "\n</likely_touched_files>\n\n"
@@ -443,6 +550,15 @@ def run_feature(
     )
     (feature_dir / "REPORT.md").write_text(report, encoding="utf-8")
     built_count = sum(1 for o in outcomes if o.status == "built")
+    if outcomes and built_count == len(outcomes):
+        tag_checkpoint(root)
+        try:
+            from autoproduct.upstream.walkthrough import generate_walkthrough
+
+            generate_walkthrough(root, provider=provider, model=model,
+                                 language_sample=fdr_text)
+        except Exception:  # noqa: BLE001
+            pass
     return AutopilotResult(
         status="completed" if outcomes and built_count == len(outcomes) else "failed",
         assessment=assessment, confirmation=confirmation, outcomes=outcomes,
