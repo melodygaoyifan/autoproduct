@@ -56,8 +56,11 @@ def test_screenshots_gated_visibly(tmp_path):
 
     root = init_workspace(tmp_path / "w", "w", "web")
     result = capture(root, "web")
-    # No playwright in the dev env: visible note, never a silent skip.
-    assert result.captured == [] and "playwright" in result.note or result.captured
+    # Whatever is missing (playwright, or an entry point in this empty
+    # workspace), the gate is a VISIBLE note — never a silent skip.
+    assert result.captured or result.note
+    if not result.captured:
+        assert "playwright" in result.note or "entry" in result.note
 
 
 # --- M4: walkthrough -----------------------------------------------------------
