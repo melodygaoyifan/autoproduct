@@ -180,7 +180,10 @@ def run_probe(workspace: Path, probe: Probe) -> ProbeResult:
         Path(probe_path).unlink(missing_ok=True)
 
 
-def run_case(case: ProductCase, *, provider: str | None = None) -> CaseResult:
+def run_case(
+    case: ProductCase, *, provider: str | None = None,
+    keep_dir: str | Path | None = None,
+) -> CaseResult:
     import time
 
     start = time.monotonic()
@@ -230,7 +233,7 @@ def run_case(case: ProductCase, *, provider: str | None = None) -> CaseResult:
             # scoreboard's most important evidence.
             import shutil as _shutil
 
-            keep = Path(".mas") / "product-bench" / "workspaces" / case.name
+            keep = Path(keep_dir or Path(".mas") / "product-bench" / "workspaces") / case.name
             _shutil.rmtree(keep, ignore_errors=True)
             keep.parent.mkdir(parents=True, exist_ok=True)
             _shutil.copytree(workspace, keep, ignore=_shutil.ignore_patterns(".probe-venv"))
