@@ -95,6 +95,7 @@ auto-merges, nothing deploys to production autonomously.
 | `review` · `resume` · `recover` · `replay` | review pipeline, HITL, crash recovery, audit trail |
 | `deploy-review` · `deploy-outcome` · `triage [--fix]` | Gates 5–6 |
 | `serve` | webhook mode: PRs review themselves; incidents POST in |
+| `worker` | queue worker — set `AUTOPRODUCT_QUEUE_DB` on `serve` and run N workers to drain bursts in parallel (SQLite, one host; multi-host needs a shared broker) |
 | `bench` · `product-bench` · `compound --pr` | the two benchmarks + the compounding loop |
 
 Setup: `uv sync`, `ANTHROPIC_API_KEY` (other provider keys optional —
