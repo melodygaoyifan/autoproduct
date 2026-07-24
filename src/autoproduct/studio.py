@@ -49,6 +49,14 @@ def _page(title: str, body: str) -> HTMLResponse:
     )
 
 
+def _failed_tasks(root: Path) -> list[str]:
+    path = root / "product" / "outcomes.yaml"
+    if not path.exists():
+        return []
+    outcomes = yaml.safe_load(path.read_text(encoding="utf-8")) or []
+    return [o["task_id"] for o in outcomes if o.get("status") != "built"]
+
+
 def _pending_feature(root: Path) -> Path | None:
     features_dir = root / "product" / "features"
     if not features_dir.is_dir():
@@ -149,16 +157,52 @@ def create_studio_app(
                     f"<input type=hidden name=slug value='{html.escape(pending.name)}'>"
                     "<button>开始添加这个功能 / Build this feature</button></form>",
                 )
+            shots_dir = root / "product" / "screenshots"
+            gallery = ""
+            if shots_dir.is_dir():
+                images = "".join(
+                    f"<img src='/shots/{p.name}' style='max-width:100%;"
+                    f"border:1px solid #ddd;border-radius:8px;margin:.4rem 0'>"
+                    for p in sorted(shots_dir.glob("*.png"))
+                )
+                if images:
+                    gallery = f"<h2>页面截图 / Screenshots</h2>{images}"
+            acceptance = (
+                "<p><a href='/acceptance'>📋 验收清单 / Acceptance walkthrough</a></p>"
+                if (root / "product" / "ACCEPTANCE.md").exists()
+                else ""
+            )
+            failed = _failed_tasks(root)
+            retry_block = ""
+            if failed:
+                rows = "".join(
+                    f"<form method=post action=/retry style='display:inline'>"
+                    f"<input type=hidden name=task_id value='{html.escape(t)}'>"
+                    f"<button class=secondary>重试 {html.escape(t)}</button></form> "
+                    for t in failed
+                )
+                retry_block = (
+                    f"<div class=card><b class=warn>没做成的模块 / Failed modules"
+                    f"</b><p>可以先不管它们，产品其余部分能用；也可以单独重试：</p>{rows}</div>"
+                )
             return _page(
                 "你的产品 / Your product",
-                f"<pre>{_md(report)}</pre>"
+                f"<pre>{_md(report)}</pre>{acceptance}{gallery}{retry_block}"
                 f"<h2>功能 / Features</h2>{feature_cards or '<p class=muted>(初版)</p>'}"
+                "<h2>哪里不对？/ Something wrong?</h2>"
+                "<p class=muted>用你自己的话说 — 小修会直接修好，需求变化会走正规变更。</p>"
+                "<form method=post action=/correct>"
+                "<textarea name=complaint style='min-height:80px' "
+                "placeholder='例：下单按钮的文字应该是「参加接龙」，不是「提交」。'></textarea>"
+                "<p><button>修正 / Correct it</button></p></form>"
                 "<h2>添加新功能 / Add a feature</h2>"
                 "<p class=muted>一次只写一个功能或改动 — 越小越准。One feature per "
                 "FDR — smaller is better.</p>"
                 "<form method=post action=/feature>"
                 "<textarea name=fdr placeholder='例：住户可以取消自己的订单，取消后汇总自动更新。'></textarea>"
-                "<p><button>检查这个功能 / Check this feature</button></p></form>",
+                "<p><button>检查这个功能 / Check this feature</button></p></form>"
+                "<form method=post action=/undo style='margin-top:1.5rem'>"
+                "<button class=secondary>⏪ 回到上一个版本 / Undo last change</button></form>",
             )
         if confirmation.exists():
             return _page(
@@ -199,6 +243,57 @@ def create_studio_app(
         from autoproduct.upstream.autopilot import run_autopilot
 
         run_autopilot(root, root / "FDR.md", yes=False, provider=provider)
+        return RedirectResponse("/", status_code=303)
+
+    @app.get("/acceptance", response_class=HTMLResponse)
+    def acceptance():
+        return _page(
+            "验收清单 / Acceptance walkthrough",
+            f"<pre>{_md(root / 'product' / 'ACCEPTANCE.md')}</pre>"
+            "<p><a href='/'>← 返回 / back</a></p>",
+        )
+
+    @app.get("/shots/{name}")
+    def shot(name: str):
+        from fastapi.responses import FileResponse
+
+        path = (root / "product" / "screenshots" / name).resolve()
+        if not path.is_file() or path.parent != (root / "product" / "screenshots").resolve():
+            raise HTTPException(404)
+        return FileResponse(path)
+
+    @app.post("/correct")
+    async def correct(request: Request):
+        form = await request.form()
+        complaint = str(form.get("complaint", "")).strip()
+        if complaint:
+            from autoproduct.upstream.correction import run_correction
+
+            result = run_correction(root, complaint, provider=provider)
+            (root / "product" / "CORRECTION-LOG.md").open("a", encoding="utf-8").write(
+                f"- {result.status}: {complaint[:120]} → {result.detail}\n"
+            )
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/retry")
+    async def retry(request: Request):
+        form = await request.form()
+        task_id = str(form.get("task_id", ""))
+        if task_id and not _build_running(root):
+            proc = subprocess.Popen(  # noqa: S603
+                [sys.executable, "-m", "autoproduct.cli", "retry-task", task_id,
+                 "--repo-dir", str(root)],
+                cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            (root / ".mas" / "build.pid").write_text(str(proc.pid), encoding="utf-8")
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/undo")
+    def undo():
+        from autoproduct.upstream.autopilot import undo_last
+
+        undo_last(root)
         return RedirectResponse("/", status_code=303)
 
     @app.post("/feature")

@@ -91,6 +91,21 @@ class MockProvider(Provider):
             return yaml.safe_dump({"ready": True, "summary": "可以开始构建", "questions": []})
         if REPORTER_MARKER in system:
             return "mock 确认/报告：会做 X，不做 Y。(plain-language output)"
+        from autoproduct.upstream.correction import CORRECTION_MARKER
+        from autoproduct.upstream.telemetry import DIGEST_MARKER
+        from autoproduct.upstream.walkthrough import WALKTHROUGH_MARKER
+
+        if CORRECTION_MARKER in system:
+            slug = re.search(r"slug: ([\w-]+)", user)
+            kind = "scope_change" if "新增" in user else "fix"
+            return yaml.safe_dump(
+                {"spec_slug": slug.group(1) if slug else "unknown",
+                 "kind": kind, "instruction": "apply the founder's correction"}
+            )
+        if WALKTHROUGH_MARKER in system:
+            return "(mock: not a checklist)"  # forces the deterministic fallback
+        if DIGEST_MARKER in system:
+            return "# 本周 mock digest\n用户做了一些事。"
         from autoproduct.upstream.discover import BRIEF_CRITIC_MARKER, BRIEFWRITER_MARKER
         from autoproduct.upstream.plan import PLAN_CRITIC_MARKER, PLANNER_MARKER
 
@@ -268,6 +283,16 @@ class MockProvider(Provider):
         )
 
     def _implement(self, user: str) -> str:
+        if "<complaint>" in user:
+            match = re.search(r'<existing_file path="([^"]+)">\n(.*?)\n</existing_file>',
+                              user, re.DOTALL)
+            if not match:
+                return yaml.safe_dump({"files": []})
+            return yaml.safe_dump(
+                {"files": [{"path": match.group(1),
+                            "new_content": match.group(2) + "\n# corrected per founder\n"}]},
+                sort_keys=False,
+            )
         if "review_findings" in user:
             match = re.search(r'<file path="([^"]+)">\n(.*?)\n</file>', user, re.DOTALL)
             if not match:

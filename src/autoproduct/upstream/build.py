@@ -273,9 +273,15 @@ def _run_build_inner(
     claude_md = repo / "CLAUDE.md"
     constraints = claude_md.read_text(encoding="utf-8") if claude_md.exists() else ""
     existing = _related_sources(repo, spec)
+    from autoproduct.upstream.blocks import blocks_context
     from autoproduct.upstream.provisioning import services_context
 
     services = services_context(repo)
+    blocks = blocks_context(
+        project.profile, f"{spec.title} {spec.design} {' '.join(spec.criteria)}"
+    )
+    if blocks:
+        existing = (existing + "\n\n" if existing else "") + blocks
     base_user = (
         f"<constraints>\n{constraints}\n</constraints>\n\n"
         + (f"<services>\n{services}\n</services>\n\n" if services else "")
