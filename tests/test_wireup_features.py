@@ -65,12 +65,13 @@ def test_existing_tests_are_read_only_to_implementer(tmp_path):
             allowed_test_paths={"tests/test_new.py"},
         )
     # New skeleton paths are the legal test-authoring surface.
-    written = _write_files(
+    written, kept = _write_files(
         tmp_path,
         [{"path": "tests/test_new.py", "new_content": "def test_b():\n    assert 1\n"}],
         allowed_test_paths={"tests/test_new.py"},
     )
     assert written == ["tests/test_new.py"]
+    assert kept == []
 
 
 # --- per-feature FDR flow ----------------------------------------------------

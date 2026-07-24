@@ -171,6 +171,10 @@ Rules:
 - lane groups tasks that touch the same surface (e.g. api, ui, infra) —
   tasks in one lane run serially, lanes run in parallel.
 - Only scope_now. scope_later items do NOT get tasks.
+- Every task is a USER-VISIBLE feature slice specifiable as acceptance
+  criteria. NO meta-tasks: no "test skeleton", "contract tests",
+  "performance benchmark", "E2E suite", or "infrastructure" tasks — tests
+  ship inside each feature task's own spec, never as a separate task.
 
 Respond with ONLY YAML:
 tasks:

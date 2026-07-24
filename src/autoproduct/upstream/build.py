@@ -82,10 +82,15 @@ def _run_tests(repo: Path):
 
 def _write_files(
     repo: Path, files: list[dict], *, allowed_test_paths: set[str] | None = None
-) -> list[str]:
+) -> tuple[list[str], list[str]]:
     """Two-pass: validate EVERY file first, then write — a refusal never
-    leaves partial state behind."""
+    leaves partial state behind. Returns (written, kept) where kept are
+    skeleton files the implementer tried to weaken: the on-disk skeleton
+    WINS silently-but-visibly instead of failing the batch — real models
+    reword their own skeleton tests every attempt (bench run 3, 5/8 tasks
+    dead on this wall), and a refusal loop never converges."""
     validated: list[tuple[str, str]] = []
+    kept: list[str] = []
     for f in files[:_MAX_FILES]:
         rel = str(f["path"]).lstrip("/")
         if any(rel.startswith(p) for p in _FORBIDDEN_PREFIXES) or ".." in rel:
@@ -108,17 +113,20 @@ def _write_files(
         if is_test and (repo / rel).exists():
             # Its own skeleton surface is rewritable, but never WEAKENABLE:
             # assertion_delta rejects removed asserts / added skips citing
-            # the exact node (§13.29.5).
+            # the exact node (§13.29.5). The rejection drops THIS file only —
+            # the skeleton stays the wall; the rest of the batch proceeds.
             from autoproduct.tools.integrity import assertion_delta
 
             weakened = assertion_delta(
                 (repo / rel).read_text(encoding="utf-8", errors="replace"), content
             )
             if weakened:
-                raise ValueError(
-                    f"test weakening rejected in {rel!r}: "
+                kept.append(
+                    f"{rel} (skeleton kept — your version dropped: "
                     + "; ".join(f"{c.change}: {c.node[:80]}" for c in weakened[:3])
+                    + ")"
                 )
+                continue
         if len(content.splitlines()) > _MAX_FILE_LINES:
             raise ValueError(f"{rel} exceeds {_MAX_FILE_LINES} lines")
         validated.append((rel, content))
@@ -129,7 +137,7 @@ def _write_files(
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         written.append(rel)
-    return written
+    return written, kept
 
 
 def _append_design_memory(repo: Path, spec: Spec, files: list[str]) -> None:
@@ -294,7 +302,11 @@ def _run_build_inner(
         + f"<repo_tree>\n{_file_tree(repo)}\n</repo_tree>\n\n"
         + (f"{existing}\n\n" if existing else "")
         + "You are EXTENDING the existing product above — integrate with it, "
-        "never recreate it. Existing test files are read-only to you.\n\n"
+        "never recreate it. Existing test files are read-only to you. Your "
+        "spec's skeleton tests already exist ON DISK: do not resubmit them "
+        "(a version missing any existing assert is silently discarded and "
+        "the skeleton kept) — write the SOURCE files that make them pass, "
+        "plus any NEW test files.\n\n"
         f"<spec>\n{yaml.safe_dump(spec.model_dump(include={'title', 'design', 'criteria'}), sort_keys=False, allow_unicode=True)}"
         f"test_skeletons:\n"
         + "\n".join(f"- {s.path}: {s.purpose} (covers {s.covers})" for s in spec.test_skeletons)
@@ -320,7 +332,7 @@ def _run_build_inner(
         )
         try:
             data = extract_mapping(raw, ("files",))
-            written = _write_files(
+            written, kept = _write_files(
                 repo, data.get("files") or [], allowed_test_paths=allowed_tests
             )
         except ValueError as exc:
@@ -344,7 +356,12 @@ def _run_build_inner(
                     slug=slug, status="error", iterations=iteration,
                     detail="implementer returned no files",
                 )
-            feedback = "you returned no files; return the complete file set"
+            feedback = (
+                "every file you returned was a weakened skeleton test and was "
+                "discarded: " + "; ".join(kept) + ". Return the SOURCE files."
+                if kept
+                else "you returned no files; return the complete file set"
+            )
             continue
         from autoproduct.testing import combine_reports, run_js_tests
 
@@ -357,6 +374,13 @@ def _run_build_inner(
             # visible in the report and review still judges the diff.
             break
         feedback = report.detail or report.summary
+        if kept:
+            feedback += (
+                "\n\nNOTE — these skeleton test files were NOT replaced (your "
+                "version removed existing asserts; the on-disk skeleton wins): "
+                + "; ".join(kept)
+                + ". Make the CODE pass the skeleton as written."
+            )
     else:
         return BuildResult(
             slug=slug,

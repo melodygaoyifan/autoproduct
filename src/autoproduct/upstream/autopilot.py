@@ -373,7 +373,7 @@ def _fix_iteration(root: Path, provider: str, model: str, findings) -> bool:
     )
     try:
         data = extract_mapping(raw, ("files",))
-        written = _write_files(root, data.get("files") or [])
+        written, _kept = _write_files(root, data.get("files") or [])
     except ValueError:
         return False
     if not written:

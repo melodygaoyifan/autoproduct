@@ -36,17 +36,24 @@ def test_strengthening_is_fine():
     assert assertion_delta(BEFORE, after) == []
 
 
-def test_weakened_skeleton_rejected_at_write(tmp_path):
+def test_weakened_skeleton_is_kept_not_written(tmp_path):
+    """Skeleton wins: a weakened rewrite of the implementer's OWN skeleton
+    is dropped (file untouched, visible in `kept`) instead of failing the
+    batch — real models reword skeletons every attempt and a refusal loop
+    never converges (bench run 3: 5/8 tasks dead on the old wall)."""
     from autoproduct.upstream.build import _write_files
 
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_s.py").write_text(BEFORE)
-    with pytest.raises(ValueError, match="test weakening"):
-        _write_files(
-            tmp_path,
-            [{"path": "tests/test_s.py", "new_content": "def test_a():\n    pass\n"}],
-            allowed_test_paths={"tests/test_s.py"},
-        )
+    written, kept = _write_files(
+        tmp_path,
+        [{"path": "good.py", "new_content": "x = 1\n"},
+         {"path": "tests/test_s.py", "new_content": "def test_a():\n    pass\n"}],
+        allowed_test_paths={"tests/test_s.py"},
+    )
+    assert written == ["good.py"]
+    assert len(kept) == 1 and "test_s.py" in kept[0] and "removed_assert" in kept[0]
+    assert (tmp_path / "tests" / "test_s.py").read_text() == BEFORE
 
 
 def test_refused_write_is_atomic(tmp_path):

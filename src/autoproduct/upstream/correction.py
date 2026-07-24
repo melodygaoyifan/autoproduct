@@ -142,12 +142,16 @@ def run_correction(
         )
         try:
             data = extract_mapping(raw_fix, ("files",))
-            batch = _write_files(root, data.get("files") or [], allowed_test_paths=allowed_tests)
+            batch, kept = _write_files(root, data.get("files") or [], allowed_test_paths=allowed_tests)
         except ValueError as exc:
             feedback = f"your previous response failed: {exc}"
             continue
         if not batch:
-            feedback = "you returned no files; return the corrected file contents"
+            feedback = (
+                "your files were discarded as weakened skeleton tests: " + "; ".join(kept)
+                if kept
+                else "you returned no files; return the corrected file contents"
+            )
             continue
         written = sorted(set(written) | set(batch))
         report = combine_reports(_pytest_in_subprocess(root), run_js_tests(root))
