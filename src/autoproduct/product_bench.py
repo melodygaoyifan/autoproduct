@@ -218,7 +218,17 @@ def run_product_bench(
     cases_dir: str | Path, *, provider: str | None = None, limit: int | None = None
 ) -> BenchSummary:
     cases = load_cases(cases_dir)[: limit or None]
-    results = [run_case(c, provider=provider) for c in cases]
+    results = []
+    for case in cases:
+        try:
+            results.append(run_case(case, provider=provider))
+        except Exception as exc:  # noqa: BLE001 — one case never kills the bench
+            results.append(
+                CaseResult(
+                    name=case.name,
+                    autopilot_status=f"error: {type(exc).__name__}: {str(exc)[:120]}",
+                )
+            )
 
     def _avg(values: list[float]) -> float:
         return sum(values) / len(values) if values else 0.0

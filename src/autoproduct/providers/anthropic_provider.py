@@ -19,15 +19,36 @@ class AnthropicProvider(Provider):
     ) -> str:
         if not os.environ.get("ANTHROPIC_API_KEY"):
             raise ProviderError("ANTHROPIC_API_KEY is not set")
+        import time
+
         import anthropic
 
         client = anthropic.Anthropic()
-        response = client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=system,
-            messages=messages,
-        )
+        # Transient-error resilience at the ADAPTER layer: overload/rate
+        # limits retry with backoff here, so every direct .complete() call
+        # site (writers, critics, implementer) inherits it — a 529 killed
+        # an entire 2-hour bench run before this existed.
+        response = None
+        for attempt in range(4):
+            try:
+                response = client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    system=system,
+                    messages=messages,
+                )
+                break
+            except (
+                anthropic.APIStatusError,
+                anthropic.APIConnectionError,
+            ) as exc:
+                status = getattr(exc, "status_code", None)
+                transient = status in (429, 500, 502, 503, 529) or isinstance(
+                    exc, anthropic.APIConnectionError
+                )
+                if not transient or attempt == 3:
+                    raise
+                time.sleep(2 ** (attempt + 1))
         text = "".join(
             block.text for block in response.content if block.type == "text"
         )
