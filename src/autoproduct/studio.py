@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 import yaml
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 _STYLE = """
@@ -91,7 +91,7 @@ def _progress(root: Path) -> dict:
         plan = yaml.safe_load(plan_path.read_text(encoding="utf-8")) or {}
         total = len(plan.get("tasks", []))
     log = subprocess.run(
-        ["git", "log", "--oneline"], cwd=root, capture_output=True, text=True
+        ["git", "log", "--oneline"], cwd=root, capture_output=True, timeout=60, text=True
     ).stdout
     built = log.count("feat(")
     return {"total": total, "built": built, "running": _build_running(root)}
@@ -102,6 +102,19 @@ def create_studio_app(
 ) -> FastAPI:
     root = Path(repo_dir).resolve()
     app = FastAPI(title="autoproduct studio", docs_url=None, redoc_url=None)
+
+    @app.middleware("http")
+    async def same_origin_guard(request: Request, call_next):
+        """Localhost is not a security boundary against the browser: a
+        malicious page can form-POST to 127.0.0.1 (sweep finding). POSTs
+        must come from the Studio itself."""
+        if request.method == "POST":
+            origin = request.headers.get("origin") or request.headers.get("referer") or ""
+            if origin and not origin.startswith(("http://127.0.0.1", "http://localhost")):
+                from fastapi.responses import PlainTextResponse
+
+                return PlainTextResponse("cross-origin POST rejected", status_code=403)
+        return await call_next(request)
 
     def _spawn_build() -> int:
         if spawn is not None:

@@ -152,7 +152,7 @@ def run_correction(
         written = sorted(set(written) | set(batch))
         report = combine_reports(_pytest_in_subprocess(root), run_js_tests(root))
         if report.status not in ("failed", "error"):
-            subprocess.run(["git", "add", "-A"], cwd=root, capture_output=True)
+            subprocess.run(["git", "add", "-A"], cwd=root, capture_output=True, timeout=60)
             committed = subprocess.run(
                 ["git", "-c", "user.email=autoproduct@local", "-c", "user.name=autoproduct",
                  "commit", "-qm", f"fix({slug}): founder correction — {complaint[:60]}"],
@@ -162,15 +162,15 @@ def run_correction(
                 return CorrectionResult(status="error", spec_slug=slug, kind=kind,
                                         detail="no effective change produced")
             sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=root,
-                                 capture_output=True, text=True).stdout.strip()
+                                 capture_output=True, timeout=60, text=True).stdout.strip()
             return CorrectionResult(
                 status="fixed", spec_slug=slug, kind=kind, commit=sha,
                 detail=f"repaired in {iteration} attempt(s); files: {', '.join(written)}",
             )
         feedback = report.detail or report.summary
-    subprocess.run(["git", "checkout", "--", "."], cwd=root, capture_output=True)
+    subprocess.run(["git", "checkout", "--", "."], cwd=root, capture_output=True, timeout=60)
     subprocess.run(["git", "clean", "-fdq", "--exclude=.mas", "--exclude=data"],
-                   cwd=root, capture_output=True)
+                   cwd=root, capture_output=True, timeout=60)
     return CorrectionResult(
         status="error", spec_slug=slug, kind=kind,
         detail=f"repair still broke the suite after {MAX_REPAIR_ITERATIONS} "

@@ -291,10 +291,10 @@ def tag_checkpoint(root: Path) -> str:
 
     existing = subprocess.run(
         ["git", "tag", "--list", "ap-checkpoint-*"], cwd=root,
-        capture_output=True, text=True,
+        capture_output=True, timeout=60, text=True,
     ).stdout.split()
     name = f"ap-checkpoint-{len(existing) + 1:03d}"
-    subprocess.run(["git", "tag", name], cwd=root, capture_output=True)
+    subprocess.run(["git", "tag", name], cwd=root, capture_output=True, timeout=60)
     return name
 
 
@@ -306,20 +306,20 @@ def undo_last(root: Path) -> dict:
 
     tags = subprocess.run(
         ["git", "tag", "--list", "ap-checkpoint-*", "--sort=version:refname"],
-        cwd=root, capture_output=True, text=True,
+        cwd=root, capture_output=True, timeout=60, text=True,
     ).stdout.split()
     if len(tags) < 2:
         return {"status": "nothing_to_undo",
                 "detail": "只有一个版本，暂时没有可回退的更早版本。"}
     rescue = f"rescue/{int(_time.time())}"
-    subprocess.run(["git", "branch", rescue], cwd=root, capture_output=True)
+    subprocess.run(["git", "branch", rescue], cwd=root, capture_output=True, timeout=60)
     target = tags[-2]
     reset = subprocess.run(
-        ["git", "reset", "--hard", target], cwd=root, capture_output=True, text=True
+        ["git", "reset", "--hard", target], cwd=root, capture_output=True, timeout=60, text=True
     )
     if reset.returncode != 0:
         return {"status": "error", "detail": reset.stderr[:200]}
-    subprocess.run(["git", "tag", "-d", tags[-1]], cwd=root, capture_output=True)
+    subprocess.run(["git", "tag", "-d", tags[-1]], cwd=root, capture_output=True, timeout=60)
     return {"status": "undone", "restored_to": target, "rescue_branch": rescue}
 
 
@@ -379,13 +379,13 @@ def _fix_iteration(root: Path, provider: str, model: str, findings) -> bool:
     if not written:
         return False
     if _pytest_in_subprocess(root).status not in ("passed", "no_tests"):
-        subprocess.run(["git", "checkout", "--", "."], cwd=root, capture_output=True)
+        subprocess.run(["git", "checkout", "--", "."], cwd=root, capture_output=True, timeout=60)
         return False
-    subprocess.run(["git", "add", "-A"], cwd=root, capture_output=True)
+    subprocess.run(["git", "add", "-A"], cwd=root, capture_output=True, timeout=60)
     committed = subprocess.run(
         ["git", "-c", "user.email=autoproduct@local", "-c", "user.name=autoproduct",
          "commit", "-qm", "fix: address serious review findings"],
-        cwd=root, capture_output=True, text=True,
+        cwd=root, capture_output=True, timeout=60, text=True,
     )
     return committed.returncode == 0
 
@@ -627,7 +627,7 @@ def _build_wave_parallel(root, wave, *, provider, model, auto_approvals):
         auto_approvals.append(f"Gate U3 ({spec.slug}): auto — ears_lint + coverage passed")
         # Commit the spec in main BEFORE branching: lane worktrees see it in
         # HEAD, and the merge back can't collide with untracked spec files.
-        subprocess.run(["git", "add", f"specs/{spec.slug}"], cwd=root, capture_output=True)
+        subprocess.run(["git", "add", f"specs/{spec.slug}"], cwd=root, capture_output=True, timeout=60)
         subprocess.run(
             ["git", "-c", "user.email=autoproduct@local", "-c", "user.name=autoproduct",
              "commit", "-qm", f"spec({spec.slug}): approved"],
@@ -648,12 +648,12 @@ def _build_wave_parallel(root, wave, *, provider, model, auto_approvals):
         merged = subprocess.run(
             ["git", "-c", "user.email=autoproduct@local", "-c", "user.name=autoproduct",
              "merge", "--no-ff", "-m", f"merge build/{result.slug}", f"build/{result.slug}"],
-            cwd=root, capture_output=True, text=True,
+            cwd=root, capture_output=True, timeout=60, text=True,
         )
         subprocess.run(["git", "branch", "-D", f"build/{result.slug}"],
-                       cwd=root, capture_output=True)
+                       cwd=root, capture_output=True, timeout=60)
         if merged.returncode != 0:
-            subprocess.run(["git", "merge", "--abort"], cwd=root, capture_output=True)
+            subprocess.run(["git", "merge", "--abort"], cwd=root, capture_output=True, timeout=60)
             outcomes.append(
                 TaskOutcome(task_id=task.id, title=task.title, status="merge_conflict",
                             detail=merged.stderr[:200] or merged.stdout[:200])
